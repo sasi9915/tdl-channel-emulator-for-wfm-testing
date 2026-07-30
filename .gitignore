@@ -1,0 +1,15 @@
+# Track only project source, testbench, and misc files.
+*
+
+!.gitignore
+!README.md
+!*/
+!**/src/**
+!**/tb/**
+!**/misc/**
+
+# Generated FPGA/Vitis workspaces; keep these local.
+**/work_proj/
+**/work_proj/**
+**/work_vitis/
+**/work_vitis/**
