@@ -18,6 +18,7 @@ architecture rtl of tb_complex_channel_emulator is
     constant C_VERIFY_PACKET_LENGTH : integer := 25;
     constant C_RELOAD_START_SAMPLE : integer := 4;
     constant C_TIMEOUT : integer := 10000;
+    constant C_BACKPRESSURE_SEED : std_logic_vector(15 downto 0) := x"ACE1";
 
     type t_coefficient_array is array (0 to C_TAP_COUNT - 1) of integer;
     type t_reload_order_array is array (0 to C_TAP_COUNT - 1) of integer range 0 to C_TAP_COUNT - 1;
@@ -140,12 +141,14 @@ architecture rtl of tb_complex_channel_emulator is
     signal dbg_real_config_accept  : std_logic := '0';
     signal dbg_imag_config_accept  : std_logic := '0';
     signal dbg_config_during_input_accept : std_logic := '0';
+    signal dbg_output_backpressure : std_logic := '0';
 
     signal verification_packet_active : std_logic := '0';
     signal current_packet_length : integer := C_ACTIVE_PACKET_LENGTH;
+    signal output_backpressure_enable : std_logic := '0';
 
     file output_file : text open write_mode is
-    "/home/sasindu/work/TDL_chnannel_emulator_project/phase_1_coeff_reloding_frictionless/coeff_relaoding_at_same_time/misc/phase_1_complex_channel_output.csv";
+    "/home/sasindu/work/TDL_chnannel_emulator_project/tdl-channel-emulator-for-wfm-testing/phase_1_coeff_reloding_frictionless/coeff_relaoding_at_same_time/misc/phase_1_complex_channel_output.csv";
 
 begin
 
@@ -184,6 +187,36 @@ begin
             m_axis_tdata => m_axis_tdata,
             m_axis_tlast => m_axis_tlast
         );
+
+    output_backpressure_driver : process (aclk)
+        variable lfsr : std_logic_vector(15 downto 0) := C_BACKPRESSURE_SEED;
+        variable feedback_bit : std_logic;
+    begin
+        if rising_edge(aclk) then
+            if aresetn = '0' then
+                m_axis_tready <= '1';
+                dbg_output_backpressure <= '0';
+                lfsr := C_BACKPRESSURE_SEED;
+            elsif output_backpressure_enable = '1' then
+                feedback_bit := lfsr(15) xor lfsr(13) xor lfsr(12) xor lfsr(10);
+                lfsr := lfsr(14 downto 0) & feedback_bit;
+
+                if lfsr(3 downto 0) = "0000" or
+                    lfsr(3 downto 0) = "0111" or
+                    lfsr(3 downto 0) = "1011" then
+                    m_axis_tready <= '0';
+                    dbg_output_backpressure <= '1';
+                else
+                    m_axis_tready <= '1';
+                    dbg_output_backpressure <= '0';
+                end if;
+            else
+                m_axis_tready <= '1';
+                dbg_output_backpressure <= '0';
+                lfsr := C_BACKPRESSURE_SEED;
+            end if;
+        end if;
+    end process;
 
     stimulus : process
 
@@ -527,6 +560,7 @@ begin
         imag_config_tdata <= (others => '0');
         verification_packet_active <= '0';
         current_packet_length <= C_ACTIVE_PACKET_LENGTH;
+        output_backpressure_enable <= '0';
 
         wait_clock_cycles(10);
         aresetn <= '1';
@@ -534,8 +568,10 @@ begin
 
         verification_packet_active <= '0';
         current_packet_length <= C_ACTIVE_PACKET_LENGTH;
+        output_backpressure_enable <= '1';
         send_active_packet_with_reload;
         wait_for_output_packet;
+        output_backpressure_enable <= '0';
         wait_clock_cycles(5);
 
         -- Flush the FIR delay line so the following impulse measures only the
