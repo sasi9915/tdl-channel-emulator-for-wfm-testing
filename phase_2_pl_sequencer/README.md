@@ -19,6 +19,7 @@ It proves:
 - drive `fu_tick` at a fixed FU period instead of waiting for `done`
 - tolerate reload/config `tready` backpressure
 - raise `timing_error` if a new `fu_tick` arrives while reload/config is still busy
+- intentionally sends an early `fu_tick` in a second scenario and checks that `timing_error` asserts
 
 ## Files
 

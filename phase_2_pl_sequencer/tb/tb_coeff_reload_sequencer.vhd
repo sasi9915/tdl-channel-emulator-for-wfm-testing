@@ -14,6 +14,7 @@ architecture sim of tb_coeff_reload_sequencer is
     constant C_TAP_COUNT  : integer := 32;
     constant C_SET_COUNT  : integer := 3;
     constant C_FU_PERIOD_CYCLES : integer := 100;
+    constant C_FAULT_FU_PERIOD_CYCLES : integer := 10;
     constant C_TIMEOUT    : integer := 20000;
 
     signal aclk    : std_logic := '0';
@@ -198,6 +199,9 @@ begin
         start <= '1';
         wait_clock_cycles(2);
 
+        report "Starting normal fixed-FU-period reload test"
+        severity note;
+
         for set_index in 0 to C_SET_COUNT - 1 loop
             send_fu_tick;
             wait_clock_cycles(C_FU_PERIOD_CYCLES - 1);
@@ -224,7 +228,40 @@ begin
         start <= '0';
         wait_clock_cycles(5);
 
-        report "Coefficient reload sequencer test completed"
+        aresetn <= '0';
+        fu_tick <= '0';
+        wait_clock_cycles(5);
+
+        aresetn <= '1';
+        wait_clock_cycles(2);
+
+        start <= '1';
+        wait_clock_cycles(2);
+
+        report "Starting early-FU timing-error test"
+        severity note;
+
+        send_fu_tick;
+        wait_clock_cycles(C_FAULT_FU_PERIOD_CYCLES - 1);
+        send_fu_tick;
+        wait_clock_cycles(2);
+
+        assert timing_error = '1'
+        report "Timing error was not asserted when the next FU tick arrived too early"
+        severity failure;
+
+        assert block_done = '0'
+        report "Block done asserted during timing-error test"
+        severity failure;
+
+        start <= '0';
+        wait_clock_cycles(4);
+
+        assert timing_error = '0'
+        report "Timing error did not clear after returning to idle"
+        severity failure;
+
+        report "Coefficient reload sequencer tests completed"
         severity note;
 
         stop;
