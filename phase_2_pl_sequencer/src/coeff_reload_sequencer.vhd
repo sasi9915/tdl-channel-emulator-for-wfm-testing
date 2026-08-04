@@ -4,39 +4,39 @@ use ieee.numeric_std.all;
 
 entity coeff_reload_sequencer is
     generic(
-        G_TAP_COUNT    : integer := 32;
-        G_SET_COUNT    : integer := 3;
-        G_COEFF_WIDTH  : integer := 16;
-        G_CONFIG_WIDTH : integer := 8
+        G_TAP_COUNT                  : integer := 32;
+        G_SET_COUNT                  : integer := 3;
+        G_COEFF_WIDTH                : integer := 16;
+        G_CONFIG_WIDTH               : integer := 8
     );
     port(
-        aclk               : in  std_logic;
-        aresetn            : in  std_logic;
-        start              : in  std_logic;
-        fu_tick            : in  std_logic;
-        coeff_real_value   : in  std_logic_vector(G_COEFF_WIDTH - 1 downto 0);
-        coeff_imag_value   : in  std_logic_vector(G_COEFF_WIDTH - 1 downto 0);
-        coeff_set_index    : out integer range 0 to G_SET_COUNT - 1;
-        coeff_tap_index    : out integer range 0 to G_TAP_COUNT - 1;
-        real_reload_tvalid : out std_logic;
-        real_reload_tready : in  std_logic;
-        real_reload_tdata  : out std_logic_vector(G_COEFF_WIDTH - 1 downto 0);
-        real_reload_tlast  : out std_logic;
-        imag_reload_tvalid : out std_logic;
-        imag_reload_tready : in  std_logic;
-        imag_reload_tdata  : out std_logic_vector(G_COEFF_WIDTH - 1 downto 0);
-        imag_reload_tlast  : out std_logic;
-        real_config_tvalid : out std_logic;
-        real_config_tready : in  std_logic;
-        real_config_tdata  : out std_logic_vector(G_CONFIG_WIDTH - 1 downto 0);
-        imag_config_tvalid : out std_logic;
-        imag_config_tready : in  std_logic;
-        imag_config_tdata  : out std_logic_vector(G_CONFIG_WIDTH - 1 downto 0);
-        busy               : out std_logic;
-        done               : out std_logic;
-        block_done         : out std_logic;
-        timing_error       : out std_logic;
-        state_debug        : out std_logic_vector(2 downto 0)
+        aclk                         : in  std_logic;
+        aresetn                      : in  std_logic;
+        start                        : in  std_logic;
+        fu_tick                      : in  std_logic;
+        coeff_real_value             : in  std_logic_vector(G_COEFF_WIDTH - 1 downto 0);
+        coeff_imag_value             : in  std_logic_vector(G_COEFF_WIDTH - 1 downto 0);
+        coeff_set_index              : out integer range 0 to G_SET_COUNT - 1;
+        coeff_tap_index              : out integer range 0 to G_TAP_COUNT - 1;
+        real_reload_tvalid           : out std_logic;
+        real_reload_tready           : in  std_logic;
+        real_reload_tdata            : out std_logic_vector(G_COEFF_WIDTH - 1 downto 0);
+        real_reload_tlast            : out std_logic;
+        imag_reload_tvalid           : out std_logic;
+        imag_reload_tready           : in  std_logic;
+        imag_reload_tdata            : out std_logic_vector(G_COEFF_WIDTH - 1 downto 0);
+        imag_reload_tlast            : out std_logic;
+        real_config_tvalid           : out std_logic;
+        real_config_tready           : in  std_logic;
+        real_config_tdata            : out std_logic_vector(G_CONFIG_WIDTH - 1 downto 0);
+        imag_config_tvalid           : out std_logic;
+        imag_config_tready           : in  std_logic;
+        imag_config_tdata            : out std_logic_vector(G_CONFIG_WIDTH - 1 downto 0);
+        busy                         : out std_logic;
+        done                         : out std_logic;
+        block_done                   : out std_logic;
+        timing_error                 : out std_logic;
+        state_debug                  : out std_logic_vector(2 downto 0)
     );
 end entity;
 
