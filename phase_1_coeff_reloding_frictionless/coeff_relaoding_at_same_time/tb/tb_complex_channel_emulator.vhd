@@ -10,14 +10,27 @@ end entity;
 
 architecture rtl of tb_complex_channel_emulator is
 
-    constant C_CLK_PERIOD : time := 10 ns;
-
     constant C_TAP_COUNT : integer := 32;
     constant C_RELOAD_SET_COUNT : integer := 3;
-    constant C_ACTIVE_PACKET_LENGTH : integer := 180;
-    constant C_VERIFY_PACKET_LENGTH : integer := 25;
+    constant C_AXIS_CLK_HZ : integer := 100_000_000;
+    constant C_FU_HZ : integer := 6_000;
+    constant C_CLK_PERIOD : time := 10 ns;
+    constant C_PHASE3_FU_PERIOD_CYCLES : integer := (C_AXIS_CLK_HZ + C_FU_HZ / 2) / C_FU_HZ;
     constant C_RELOAD_START_SAMPLE : integer := 4;
-    constant C_TIMEOUT : integer := 10000;
+    constant C_ACTIVE_PACKET_LENGTH : integer :=
+        C_RELOAD_START_SAMPLE +
+        (C_RELOAD_SET_COUNT - 1) * C_PHASE3_FU_PERIOD_CYCLES +
+        C_TAP_COUNT +
+        256;
+    constant C_VERIFY_PACKET_LENGTH : integer := 25;
+    constant C_INPUT_READY_TIMEOUT_CYCLES : integer := 1024;
+    constant C_ACTIVE_TEST_TIMEOUT_CYCLES : integer :=
+        C_ACTIVE_PACKET_LENGTH +
+        C_RELOAD_SET_COUNT * C_PHASE3_FU_PERIOD_CYCLES +
+        4096;
+    constant C_OUTPUT_PACKET_TIMEOUT_CYCLES : integer :=
+        C_ACTIVE_PACKET_LENGTH * 8 +
+        4096;
     constant C_BACKPRESSURE_SEED : std_logic_vector(15 downto 0) := x"ACE1";
 
     type t_coefficient_array is array (0 to C_TAP_COUNT - 1) of integer;
@@ -130,6 +143,21 @@ architecture rtl of tb_complex_channel_emulator is
     signal imag_config_tready      : std_logic;
     signal imag_config_tdata       : std_logic_vector(7 downto 0) := (others => '0');
 
+    signal sequencer_start         : std_logic := '0';
+    signal sequencer_fu_tick       : std_logic := '0';
+    signal sequencer_coeff_real    : std_logic_vector(15 downto 0);
+    signal sequencer_coeff_imag    : std_logic_vector(15 downto 0);
+    signal sequencer_set_index     : integer range 0 to C_RELOAD_SET_COUNT - 1;
+    signal sequencer_tap_index     : integer range 0 to C_TAP_COUNT - 1;
+    signal sequencer_busy          : std_logic;
+    signal sequencer_done          : std_logic;
+    signal sequencer_block_done    : std_logic;
+    signal sequencer_timing_error  : std_logic;
+    signal sequencer_state_debug   : std_logic_vector(2 downto 0);
+
+    signal reload_handshake        : std_logic;
+    signal config_handshake        : std_logic;
+
     signal dbg_reload_accept       : std_logic := '0';
     signal dbg_reload_set_index    : integer range 0 to C_RELOAD_SET_COUNT - 1 := 0;
     signal dbg_reload_slot         : integer range 0 to C_TAP_COUNT - 1 := 0;
@@ -148,11 +176,35 @@ architecture rtl of tb_complex_channel_emulator is
     signal output_backpressure_enable : std_logic := '0';
 
     file output_file : text open write_mode is
-    "/home/sasindu/work/TDL_chnannel_emulator_project/tdl-channel-emulator-for-wfm-testing/phase_1_coeff_reloding_frictionless/coeff_relaoding_at_same_time/misc/phase_1_complex_channel_output.csv";
+    "/home/sasindu/work/TDL_chnannel_emulator_project/tdl-channel-emulator-for-wfm-testing/phase_3_adding_sequencer_2_path_1/misc/phase_3_complex_channel_output.csv";
 
 begin
 
     aclk <= not aclk after C_CLK_PERIOD / 2;
+
+    sequencer_coeff_real <= std_logic_vector(
+        to_signed(
+            reload_real_coefficient(
+                sequencer_set_index,
+                C_RELOAD_ORDER(sequencer_tap_index)
+            ),
+            sequencer_coeff_real'length
+        )
+    );
+
+    sequencer_coeff_imag <= std_logic_vector(
+        to_signed(
+            reload_imag_coefficient(
+                sequencer_set_index,
+                C_RELOAD_ORDER(sequencer_tap_index)
+            ),
+            sequencer_coeff_imag'length
+        )
+    );
+
+    reload_handshake <= real_reload_tvalid and imag_reload_tvalid and real_reload_tready and imag_reload_tready;
+
+    config_handshake <= real_config_tvalid and imag_config_tvalid and real_config_tready and imag_config_tready;
 
     dut : entity work.complex_channel_emulator
         port map(
@@ -186,6 +238,43 @@ begin
             m_axis_tready => m_axis_tready,
             m_axis_tdata => m_axis_tdata,
             m_axis_tlast => m_axis_tlast
+        );
+
+    u_coeff_reload_sequencer : entity work.coeff_reload_sequencer
+        generic map(
+            G_TAP_COUNT => C_TAP_COUNT,
+            G_SET_COUNT => C_RELOAD_SET_COUNT,
+            G_COEFF_WIDTH => 16,
+            G_CONFIG_WIDTH => 8
+        )
+        port map(
+            aclk => aclk,
+            aresetn => aresetn,
+            start => sequencer_start,
+            fu_tick => sequencer_fu_tick,
+            coeff_real_value => sequencer_coeff_real,
+            coeff_imag_value => sequencer_coeff_imag,
+            coeff_set_index => sequencer_set_index,
+            coeff_tap_index => sequencer_tap_index,
+            real_reload_tvalid => real_reload_tvalid,
+            real_reload_tready => real_reload_tready,
+            real_reload_tdata => real_reload_tdata,
+            real_reload_tlast => real_reload_tlast,
+            imag_reload_tvalid => imag_reload_tvalid,
+            imag_reload_tready => imag_reload_tready,
+            imag_reload_tdata => imag_reload_tdata,
+            imag_reload_tlast => imag_reload_tlast,
+            real_config_tvalid => real_config_tvalid,
+            real_config_tready => real_config_tready,
+            real_config_tdata => real_config_tdata,
+            imag_config_tvalid => imag_config_tvalid,
+            imag_config_tready => imag_config_tready,
+            imag_config_tdata => imag_config_tdata,
+            busy => sequencer_busy,
+            done => sequencer_done,
+            block_done => sequencer_block_done,
+            timing_error => sequencer_timing_error,
+            state_debug => sequencer_state_debug
         );
 
     output_backpressure_driver : process (aclk)
@@ -249,7 +338,7 @@ begin
 
                 timeout_counter := timeout_counter + 1;
 
-                assert timeout_counter < C_TIMEOUT
+                assert timeout_counter < C_INPUT_READY_TIMEOUT_CYCLES
                 report "Timeout waiting for input TREADY"
                     severity failure;
             end loop;
@@ -283,37 +372,31 @@ begin
             end loop;
         end procedure;
 
-        procedure send_active_packet_with_reload is
+        procedure send_active_packet_with_sequencer is
             variable sample_index : integer := 0;
-            variable reload_set_index : integer range 0 to C_RELOAD_SET_COUNT - 1 := 0;
-            variable reload_slot : integer := 0;
-            variable coefficient_index : integer := 0;
             variable timeout_counter : integer := 0;
             variable data_active : boolean := false;
-            variable real_reload_active : boolean := false;
-            variable imag_reload_active : boolean := false;
-            variable reload_beat_pending : boolean := false;
-            variable reload_set_loaded : boolean := false;
-            variable all_reload_sets_done : boolean := false;
-            variable real_config_active : boolean := false;
-            variable imag_config_active : boolean := false;
-            variable config_started : boolean := false;
-            variable config_done : boolean := false;
             variable data_done : boolean := false;
-            variable current_real_word : integer := 0;
-            variable current_imag_word : integer := 0;
-            variable input_accepted : boolean := false;
-            variable real_config_accepted : boolean := false;
-            variable imag_config_accepted : boolean := false;
+            variable sequencer_started : boolean := false;
+            variable fu_tick_count : integer := 0;
+            variable fu_wait_count : integer := 0;
         begin
-            report "Starting the single Phase-1 active-traffic repeated reload test"
+            report "Starting the Phase-3 active-traffic test with sequencer-driven reload"
                 severity note;
 
             loop
+                sequencer_fu_tick <= '0';
+                dbg_reload_accept <= '0';
+                dbg_config_accept <= '0';
+                dbg_input_accept <= '0';
+                dbg_real_config_accept <= '0';
+                dbg_imag_config_accept <= '0';
+                dbg_config_during_input_accept <= '0';
+
                 if not data_active and not data_done then
                     s_axis_tdata <= std_logic_vector(to_signed(0, 16)) & std_logic_vector(to_signed(1, 16));
 
-                    if sample_index = C_ACTIVE_PACKET_LENGTH - 1 then
+                    if sequencer_block_done = '1' and sequencer_started then
                         s_axis_tlast <= '1';
                     else
                         s_axis_tlast <= '0';
@@ -323,204 +406,104 @@ begin
                     data_active := true;
                 end if;
 
-                if sample_index >= C_RELOAD_START_SAMPLE and
-                    not all_reload_sets_done and
-                    not config_started and
-                    not reload_set_loaded and
-                    not reload_beat_pending then
+                if sample_index >= C_RELOAD_START_SAMPLE and not sequencer_started then
+                    sequencer_fu_tick <= '1';
+                    sequencer_started := true;
+                    fu_tick_count := 1;
+                    fu_wait_count := 0;
 
-                    coefficient_index := C_RELOAD_ORDER(reload_slot);
-                    current_real_word :=
-                        reload_real_coefficient(reload_set_index, coefficient_index);
-                    current_imag_word :=
-                        reload_imag_coefficient(reload_set_index, coefficient_index);
-
-                    real_reload_tdata <= std_logic_vector(
-                        to_signed(current_real_word, real_reload_tdata'LENGTH)
-                        );
-                    imag_reload_tdata <= std_logic_vector(
-                        to_signed(current_imag_word, imag_reload_tdata'LENGTH)
-                        );
-
-                    if reload_slot = C_TAP_COUNT - 1 then
-                        real_reload_tlast <= '1';
-                        imag_reload_tlast <= '1';
-                    else
-                        real_reload_tlast <= '0';
-                        imag_reload_tlast <= '0';
-                    end if;
-
-                    real_reload_tvalid <= '1';
-                    imag_reload_tvalid <= '1';
-                    real_reload_active := true;
-                    imag_reload_active := true;
-                    reload_beat_pending := true;
-                end if;
-
-                if reload_set_loaded and
-                    not config_started and
-                    not config_done and
-                    not all_reload_sets_done then
-
-                    real_config_tdata <= (others => '0');
-                    imag_config_tdata <= (others => '0');
-                    real_config_tvalid <= '1';
-                    imag_config_tvalid <= '1';
-                    real_config_active := true;
-                    imag_config_active := true;
-                    config_started := true;
-
-                    report "Starting CONFIG for reload set " &
-                        integer'image(reload_set_index) &
-                        " while the input packet is still active"
+                    report "Starting sequencer reload during active input traffic"
                         severity note;
+                elsif sequencer_started and fu_tick_count < C_RELOAD_SET_COUNT then
+                    if fu_wait_count = C_PHASE3_FU_PERIOD_CYCLES - 1 then
+                        sequencer_fu_tick <= '1';
+                        fu_tick_count := fu_tick_count + 1;
+                        fu_wait_count := 0;
+                    else
+                        fu_wait_count := fu_wait_count + 1;
+                    end if;
                 end if;
 
                 wait until rising_edge(aclk);
 
-                dbg_reload_accept <= '0';
-                dbg_config_accept <= '0';
-                dbg_input_accept <= '0';
-                dbg_real_config_accept <= '0';
-                dbg_imag_config_accept <= '0';
-                dbg_config_during_input_accept <= '0';
-                input_accepted := false;
-                real_config_accepted := false;
-                imag_config_accepted := false;
+                assert sequencer_timing_error = '0'
+                report "Sequencer reported a timing error during the Phase-3 active packet"
+                    severity failure;
 
                 if data_active and s_axis_tready = '1' then
-                    input_accepted := true;
                     dbg_input_accept <= '1';
                     s_axis_tvalid <= '0';
                     s_axis_tlast <= '0';
                     s_axis_tdata <= (others => '0');
                     data_active := false;
 
-                    if sample_index = C_ACTIVE_PACKET_LENGTH - 1 then
+                    if s_axis_tlast = '1' then
                         data_done := true;
+                        current_packet_length <= sample_index + 1;
                     else
                         sample_index := sample_index + 1;
                     end if;
                 end if;
 
-                if real_reload_active and real_reload_tready = '1' then
-                    real_reload_tvalid <= '0';
-                    real_reload_tlast <= '0';
-                    real_reload_tdata <= (others => '0');
-                    real_reload_active := false;
-                end if;
-
-                if imag_reload_active and imag_reload_tready = '1' then
-                    imag_reload_tvalid <= '0';
-                    imag_reload_tlast <= '0';
-                    imag_reload_tdata <= (others => '0');
-                    imag_reload_active := false;
-                end if;
-
-                if reload_beat_pending and not real_reload_active and not imag_reload_active then
-
+                if reload_handshake = '1' then
                     dbg_reload_accept <= '1';
-                    dbg_reload_set_index <= reload_set_index;
-                    dbg_reload_slot <= reload_slot;
-                    dbg_reload_real_word <= std_logic_vector(
-                        to_signed(current_real_word, 16)
-                        );
-                    dbg_reload_imag_word <= std_logic_vector(
-                        to_signed(current_imag_word, 16)
-                        );
+                    dbg_reload_set_index <= sequencer_set_index;
+                    dbg_reload_slot <= sequencer_tap_index;
+                    dbg_reload_real_word <= real_reload_tdata;
+                    dbg_reload_imag_word <= imag_reload_tdata;
 
                     report "Reload set " &
-                        integer'image(reload_set_index) &
+                        integer'image(sequencer_set_index) &
                         ", slot " &
-                        integer'image(reload_slot) &
-                        " accepted during active input traffic"
+                        integer'image(sequencer_tap_index) &
+                        " accepted from the sequencer"
                         severity note;
-
-                    if reload_slot /= C_TAP_COUNT - 1 then
-                        reload_slot := reload_slot + 1;
-                    else
-                        reload_set_loaded := true;
-                    end if;
-
-                    reload_beat_pending := false;
                 end if;
 
-                if real_config_active or imag_config_active then
+                if real_config_tvalid = '1' and real_config_tready = '1' then
+                    dbg_real_config_accept <= '1';
+                end if;
+
+                if imag_config_tvalid = '1' and imag_config_tready = '1' then
+                    dbg_imag_config_accept <= '1';
+                end if;
+
+                if config_handshake = '1' then
                     assert real_config_tready = imag_config_tready
                     report "CONFIG TREADY mismatch; real and imaginary FIRs would not commit together"
                         severity error;
-                end if;
-
-                if real_config_active and real_config_tready = '1' then
-                    real_config_accepted := true;
-                    dbg_real_config_accept <= '1';
-                    real_config_tvalid <= '0';
-                    real_config_tdata <= (others => '0');
-                    real_config_active := false;
-                end if;
-
-                if imag_config_active and imag_config_tready = '1' then
-                    imag_config_accepted := true;
-                    dbg_imag_config_accept <= '1';
-                    imag_config_tvalid <= '0';
-                    imag_config_tdata <= (others => '0');
-                    imag_config_active := false;
-                end if;
-
-                if config_started and not real_config_active and not imag_config_active and
-                    not config_done then
-
-                    assert not data_done
-                    report "CONFIG was accepted only after the active input packet ended"
-                        severity error;
 
                     dbg_config_accept <= '1';
-                    dbg_config_set_index <= reload_set_index;
-                    if input_accepted and real_config_accepted and imag_config_accepted then
+                    dbg_config_set_index <= sequencer_set_index;
+
+                    if data_active and s_axis_tready = '1' then
                         dbg_config_during_input_accept <= '1';
                     end if;
-                    config_done := true;
 
                     report "CONFIG for reload set " &
-                        integer'image(reload_set_index) &
-                        " accepted during active input traffic"
+                        integer'image(sequencer_set_index) &
+                        " accepted from the sequencer"
                         severity note;
-
-                    if reload_set_index = C_RELOAD_SET_COUNT - 1 then
-                        all_reload_sets_done := true;
-                    else
-                        reload_set_index := reload_set_index + 1;
-                        reload_slot := 0;
-                        reload_set_loaded := false;
-                        config_started := false;
-                        config_done := false;
-                    end if;
                 end if;
 
-                exit when data_done and all_reload_sets_done;
+                exit when data_done and sequencer_block_done = '1';
 
                 timeout_counter := timeout_counter + 1;
 
-                assert timeout_counter < C_TIMEOUT
-                report "Timeout during the active-traffic reload test"
+                assert timeout_counter < C_ACTIVE_TEST_TIMEOUT_CYCLES
+                report "Timeout during the Phase-3 active-traffic sequencer test"
                     severity failure;
             end loop;
+
+            assert sequencer_block_done = '1'
+            report "Sequencer did not finish all coefficient sets during the active packet"
+                severity failure;
 
             s_axis_tvalid <= '0';
             s_axis_tlast <= '0';
             s_axis_tdata <= (others => '0');
-            real_reload_tvalid <= '0';
-            real_reload_tlast <= '0';
-            real_reload_tdata <= (others => '0');
-            imag_reload_tvalid <= '0';
-            imag_reload_tlast <= '0';
-            imag_reload_tdata <= (others => '0');
-            real_config_tvalid <= '0';
-            real_config_tdata <= (others => '0');
-            imag_config_tvalid <= '0';
-            imag_config_tdata <= (others => '0');
 
-            report "Active-traffic reload packet completed"
+            report "Phase-3 active-traffic sequencer packet completed"
                 severity note;
         end procedure;
 
@@ -537,7 +520,7 @@ begin
 
                 timeout_counter := timeout_counter + 1;
 
-                assert timeout_counter < C_TIMEOUT
+                assert timeout_counter < C_OUTPUT_PACKET_TIMEOUT_CYCLES
                 report "Timeout waiting for output packet"
                     severity failure;
             end loop;
@@ -548,16 +531,8 @@ begin
         s_axis_tvalid <= '0';
         s_axis_tlast <= '0';
         s_axis_tdata <= (others => '0');
-        real_reload_tvalid <= '0';
-        real_reload_tlast <= '0';
-        real_reload_tdata <= (others => '0');
-        real_config_tvalid <= '0';
-        real_config_tdata <= (others => '0');
-        imag_reload_tvalid <= '0';
-        imag_reload_tlast <= '0';
-        imag_reload_tdata <= (others => '0');
-        imag_config_tvalid <= '0';
-        imag_config_tdata <= (others => '0');
+        sequencer_start <= '0';
+        sequencer_fu_tick <= '0';
         verification_packet_active <= '0';
         current_packet_length <= C_ACTIVE_PACKET_LENGTH;
         output_backpressure_enable <= '0';
@@ -565,11 +540,13 @@ begin
         wait_clock_cycles(10);
         aresetn <= '1';
         wait_clock_cycles(2);
+        sequencer_start <= '1';
+        wait_clock_cycles(2);
 
         verification_packet_active <= '0';
         current_packet_length <= C_ACTIVE_PACKET_LENGTH;
         output_backpressure_enable <= '1';
-        send_active_packet_with_reload;
+        send_active_packet_with_sequencer;
         wait_for_output_packet;
         output_backpressure_enable <= '0';
         wait_clock_cycles(5);
@@ -588,8 +565,11 @@ begin
         wait_for_output_packet;
         wait_clock_cycles(10);
 
-        report "Single Phase-1 coefficient reload test completed"
+        report "Phase-3 sequencer-to-channel-path test completed"
             severity note;
+
+        sequencer_start <= '0';
+        wait_clock_cycles(5);
 
         wait;
     end process;
@@ -666,14 +646,16 @@ begin
 
                 writeline(output_file, output_line);
 
-                report "Phase-1 active reload output " &
-                    integer'image(output_index) &
-                    ": I=" &
-                    integer'image(output_i) &
-                    ", Q=" &
-                    integer'image(output_q) &
-                    ", TLAST=" &
-                    std_logic'image(m_axis_tlast);
+                if verification_packet_active = '1' or output_index < 8 or m_axis_tlast = '1' then
+                    report "Phase-3 channel output " &
+                        integer'image(output_index) &
+                        ": I=" &
+                        integer'image(output_i) &
+                        ", Q=" &
+                        integer'image(output_q) &
+                        ", TLAST=" &
+                        std_logic'image(m_axis_tlast);
+                end if;
 
                 if verification_packet_active = '1' then
                     case output_index is
