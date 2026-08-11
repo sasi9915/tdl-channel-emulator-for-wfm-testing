@@ -7,15 +7,18 @@ use std.env.all;
 use std.textio.all;
 
 entity tb_coeff_ping_pong_buffer is
+    generic(
+        C_TAP_COUNT         : positive := 32;
+        C_MAX_SETS_PER_BANK : positive := 600;
+        C_SETS_PER_BANK     : positive := 8;
+        C_COEFF_WIDTH       : positive := 16;
+        C_OUTPUT_FILE       : string   := "phase_4_ping_pong_buffer_output.csv"
+    );
 end entity;
 
 architecture sim of tb_coeff_ping_pong_buffer is
 
-    constant C_CLK_PERIOD    : time    := 10 ns;
-    constant C_TAP_COUNT     : integer := 32;
-    constant C_SETS_PER_BANK : integer := 8;
-    constant C_COEFF_WIDTH   : integer := 16;
-
+    constant C_CLK_PERIOD : time := 3.333 ns;
     signal aclk         : std_logic := '0';
     signal aresetn      : std_logic := '0';
     signal clear_errors : std_logic := '0';
@@ -25,9 +28,11 @@ architecture sim of tb_coeff_ping_pong_buffer is
     signal wr_data  : std_logic_vector((2 * C_COEFF_WIDTH) - 1 downto 0) := (others => '0');
     signal wr_last  : std_logic                                          := '0';
 
+    signal rd_en             : std_logic := '0';
     signal rd_tap_index      : integer range 0 to C_TAP_COUNT - 1 := 0;
     signal rd_data           : std_logic_vector((2 * C_COEFF_WIDTH) - 1 downto 0);
-    signal consume_set_valid : std_logic                          := '0';
+    signal rd_valid          : std_logic;
+    signal consume_set_valid : std_logic := '0';
     signal consume_set_ready : std_logic;
 
     signal active_set_available : std_logic;
@@ -40,7 +45,7 @@ architecture sim of tb_coeff_ping_pong_buffer is
         tap_index  : integer
     ) return integer is
     begin
-        return bank_index * 10000 + set_index * 100 + tap_index;
+        return (bank_index * 1024) + ((set_index mod 16) * C_TAP_COUNT) + tap_index;
     end function;
 
     function coeff_imag(
@@ -49,7 +54,7 @@ architecture sim of tb_coeff_ping_pong_buffer is
         tap_index  : integer
     ) return integer is
     begin
-        return -(bank_index * 10000 + set_index * 100 + tap_index);
+        return -coeff_real(bank_index, set_index, tap_index);
     end function;
 
     function packed_coeff(
@@ -73,20 +78,24 @@ begin
 
     dut : entity work.coeff_ping_pong_buffer
         generic map(
-            G_TAP_COUNT     => C_TAP_COUNT,
-            G_SETS_PER_BANK => C_SETS_PER_BANK,
-            G_COEFF_WIDTH   => C_COEFF_WIDTH
+            G_TAP_COUNT         => C_TAP_COUNT,
+            G_MAX_SETS_PER_BANK => C_MAX_SETS_PER_BANK,
+            G_COEFF_WIDTH       => C_COEFF_WIDTH,
+            G_RAM_STYLE         => "block"
         )
         port map(
             aclk                 => aclk,
             aresetn              => aresetn,
             clear_errors         => clear_errors,
+            cfg_sets_per_bank    => C_SETS_PER_BANK,
             wr_valid             => wr_valid,
             wr_ready             => wr_ready,
             wr_data              => wr_data,
             wr_last              => wr_last,
+            rd_en                => rd_en,
             rd_tap_index         => rd_tap_index,
             rd_data              => rd_data,
+            rd_valid             => rd_valid,
             consume_set_valid    => consume_set_valid,
             consume_set_ready    => consume_set_ready,
             active_set_available => active_set_available,
@@ -95,7 +104,7 @@ begin
         );
 
     stimulus : process
-        file output_log : text open write_mode is "phase_4_ping_pong_buffer_output.csv";
+        file output_log : text open write_mode is C_OUTPUT_FILE;
 
         -- wait for a specified number of clock cycles
         procedure wait_clock_cycles(
@@ -110,7 +119,7 @@ begin
         procedure log_header is
             variable log_line : line;
         begin
-            write(log_line, string'("time_ns,event,bank,set,tap,real,imag,wr_valid,wr_ready,wr_last,active_set_available,consume_set_ready,underrun,write_error"));
+            write(log_line, string'("time_ns,event,bank,set,tap,real,imag,wr_valid,wr_ready,wr_last,rd_en,rd_valid,active_set_available,consume_set_ready,underrun,write_error"));
             writeline(output_log, log_line);
         end procedure;
 
@@ -156,6 +165,10 @@ begin
             write(log_line, sl_to_character(wr_ready));
             write(log_line, string'(","));
             write(log_line, sl_to_character(wr_last));
+            write(log_line, string'(","));
+            write(log_line, sl_to_character(rd_en));
+            write(log_line, string'(","));
+            write(log_line, sl_to_character(rd_valid));
             write(log_line, string'(","));
             write(log_line, sl_to_character(active_set_available));
             write(log_line, string'(","));
@@ -261,7 +274,14 @@ begin
         ) is
         begin
             rd_tap_index <= tap_index;
+            rd_en        <= '1';
+            wait until rising_edge(aclk);
+            rd_en <= '0';
             wait for 1 ns;
+
+            assert rd_valid = '1'
+            report "Coefficient BRAM read did not become valid"
+            severity failure;
 
             assert rd_data = packed_coeff(bank_index, set_index, tap_index)
             report "Unexpected packed coefficient read from active bank"
