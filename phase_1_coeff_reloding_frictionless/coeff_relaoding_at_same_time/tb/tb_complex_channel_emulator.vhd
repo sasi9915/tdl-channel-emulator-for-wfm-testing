@@ -10,26 +10,43 @@ end entity;
 
 architecture rtl of tb_complex_channel_emulator is
 
-    constant C_CLK_PERIOD : time := 10 ns;
+    constant C_CLK_PERIOD : time := 3.333 ns;
 
-    constant C_TAP_COUNT : integer := 32;
+    constant C_TAP_COUNT : integer := 128;
+    constant C_FIR_SAMPLE_PERIOD : integer := 7;
+    constant C_RELOAD_WORD_COUNT : integer := 133;
+    constant C_VERIFY_RESPONSE_OFFSET : integer := 0;
     constant C_RELOAD_SET_COUNT : integer := 3;
-    constant C_ACTIVE_PACKET_LENGTH : integer := 180;
-    constant C_VERIFY_PACKET_LENGTH : integer := 25;
     constant C_RELOAD_START_SAMPLE : integer := 4;
-    constant C_TIMEOUT : integer := 10000;
+    constant C_FU_PERIOD_CYCLES : integer := 50000;
+    constant C_ACTIVE_PACKET_LENGTH : integer :=
+        (((C_RELOAD_SET_COUNT - 1) * C_FU_PERIOD_CYCLES) +
+        (C_RELOAD_START_SAMPLE * C_FIR_SAMPLE_PERIOD) +
+        C_RELOAD_WORD_COUNT + 2048) / C_FIR_SAMPLE_PERIOD;
+    constant C_VERIFY_PACKET_LENGTH : integer := C_TAP_COUNT;
+    constant C_BOUNDARY_PACKET_LENGTH : integer := 512;
+    constant C_BOUNDARY_RELOAD_START_CYCLE : integer := 1000;
+    constant C_TIMEOUT : integer := (C_RELOAD_SET_COUNT * C_FU_PERIOD_CYCLES) + 50000;
 
     type t_coefficient_array is array (0 to C_TAP_COUNT - 1) of integer;
-    type t_reload_order_array is array (0 to C_TAP_COUNT - 1) of integer range 0 to C_TAP_COUNT - 1;
+    type t_reload_order_array is array (0 to C_RELOAD_WORD_COUNT - 1) of integer range 0 to C_RELOAD_WORD_COUNT - 1;
 
-    -- Replace this with the actual reload order displayed by the FIR Compiler
-    -- coefficient reload tab if Vivado reports a different order.
-    constant C_RELOAD_ORDER : t_reload_order_array := (
-        0, 1, 2, 3, 4, 5, 6, 7,
-        8, 9, 10, 11, 12, 13, 14, 15,
-        16, 17, 18, 19, 20, 21, 22, 23,
-        24, 25, 26, 27, 28, 29, 30, 31
-    );
+    function generated_reload_order return t_reload_order_array is
+        variable reload_order : t_reload_order_array;
+    begin
+        for index in 0 to C_RELOAD_WORD_COUNT - 1 loop
+            reload_order(index) :=
+                (C_RELOAD_WORD_COUNT - C_FIR_SAMPLE_PERIOD) -
+                ((index / C_FIR_SAMPLE_PERIOD) * C_FIR_SAMPLE_PERIOD) +
+                (index mod C_FIR_SAMPLE_PERIOD);
+        end loop;
+
+        return reload_order;
+    end function;
+
+    -- Matches fir_compiler_invest_*_reload_order.txt for the generated
+    -- 128-tap, sample-period-7 FIR configuration.
+    constant C_RELOAD_ORDER : t_reload_order_array := generated_reload_order;
 
     function reload_real_coefficient (
         set_index : integer;
@@ -98,6 +115,37 @@ architecture rtl of tb_complex_channel_emulator is
         end case;
     end function;
 
+    function reload_real_sum (
+        set_index : integer
+    ) return integer is
+        variable coefficient_sum : integer := 0;
+    begin
+        for coefficient_index in 0 to C_TAP_COUNT - 1 loop
+            coefficient_sum := coefficient_sum +
+                reload_real_coefficient(set_index, coefficient_index);
+        end loop;
+
+        return coefficient_sum;
+    end function;
+
+    function reload_imag_sum (
+        set_index : integer
+    ) return integer is
+        variable coefficient_sum : integer := 0;
+    begin
+        for coefficient_index in 0 to C_TAP_COUNT - 1 loop
+            coefficient_sum := coefficient_sum +
+                reload_imag_coefficient(set_index, coefficient_index);
+        end loop;
+
+        return coefficient_sum;
+    end function;
+
+    constant C_BOUNDARY_EXPECTED_I : integer := reload_real_sum(0);
+    constant C_BOUNDARY_EXPECTED_Q : integer := reload_imag_sum(0);
+    constant C_BOUNDARY_SETTLE_LIMIT : integer := 32;
+    constant C_BOUNDARY_STABLE_SAMPLE_COUNT : integer := 8;
+
     signal aclk                    : std_logic := '0';
     signal aresetn                 : std_logic := '0';
 
@@ -131,7 +179,7 @@ architecture rtl of tb_complex_channel_emulator is
 
     signal dbg_reload_accept       : std_logic := '0';
     signal dbg_reload_set_index    : integer range 0 to C_RELOAD_SET_COUNT - 1 := 0;
-    signal dbg_reload_slot         : integer range 0 to C_TAP_COUNT - 1 := 0;
+    signal dbg_reload_slot         : integer range 0 to C_RELOAD_WORD_COUNT - 1 := 0;
     signal dbg_reload_real_word    : std_logic_vector(15 downto 0) := (others => '0');
     signal dbg_reload_imag_word    : std_logic_vector(15 downto 0) := (others => '0');
     signal dbg_config_accept       : std_logic := '0';
@@ -142,10 +190,12 @@ architecture rtl of tb_complex_channel_emulator is
     signal dbg_config_during_input_accept : std_logic := '0';
 
     signal verification_packet_active : std_logic := '0';
+    signal boundary_packet_active : std_logic := '0';
+    signal boundary_config_committed : std_logic := '0';
     signal current_packet_length : integer := C_ACTIVE_PACKET_LENGTH;
 
     file output_file : text open write_mode is
-    "/home/sasindu/work/TDL_chnannel_emulator_project/phase_1_coeff_reloding_frictionless/coeff_relaoding_at_same_time/misc/phase_1_complex_channel_output.csv";
+    "/home/sasindu/work/TDL_chnannel_emulator_project/tdl-channel-emulator-for-wfm-testing/phase_1_coeff_reloding_frictionless/coeff_relaoding_at_same_time/misc/phase_1_complex_channel_output.csv";
 
 begin
 
@@ -250,6 +300,373 @@ begin
             end loop;
         end procedure;
 
+        procedure send_reload_set (
+            constant set_index : integer
+        ) is
+            variable coefficient_index : integer := 0;
+            variable current_real_word : integer := 0;
+            variable current_imag_word : integer := 0;
+            variable timeout_counter : integer := 0;
+        begin
+            for reload_slot in 0 to C_RELOAD_WORD_COUNT - 1 loop
+                coefficient_index := C_RELOAD_ORDER(reload_slot);
+                current_real_word := reload_real_coefficient(set_index, coefficient_index);
+                current_imag_word := reload_imag_coefficient(set_index, coefficient_index);
+
+                real_reload_tdata <= std_logic_vector(to_signed(current_real_word, 16));
+                imag_reload_tdata <= std_logic_vector(to_signed(current_imag_word, 16));
+                real_reload_tvalid <= '1';
+                imag_reload_tvalid <= '1';
+
+                if reload_slot = C_RELOAD_WORD_COUNT - 1 then
+                    real_reload_tlast <= '1';
+                    imag_reload_tlast <= '1';
+                else
+                    real_reload_tlast <= '0';
+                    imag_reload_tlast <= '0';
+                end if;
+
+                loop
+                    wait until rising_edge(aclk);
+
+                    exit when real_reload_tready = '1' and imag_reload_tready = '1';
+
+                    timeout_counter := timeout_counter + 1;
+
+                    assert timeout_counter < C_TIMEOUT
+                    report "Timeout waiting for reload TREADY in boundary test"
+                        severity failure;
+                end loop;
+
+                dbg_reload_accept <= '1';
+                dbg_reload_set_index <= set_index;
+                dbg_reload_slot <= reload_slot;
+                dbg_reload_real_word <= std_logic_vector(to_signed(current_real_word, 16));
+                dbg_reload_imag_word <= std_logic_vector(to_signed(current_imag_word, 16));
+
+                wait until rising_edge(aclk);
+                dbg_reload_accept <= '0';
+                real_reload_tvalid <= '0';
+                imag_reload_tvalid <= '0';
+                real_reload_tlast <= '0';
+                imag_reload_tlast <= '0';
+                real_reload_tdata <= (others => '0');
+                imag_reload_tdata <= (others => '0');
+            end loop;
+        end procedure;
+
+        procedure send_synchronized_config is
+            variable timeout_counter : integer := 0;
+        begin
+            real_config_tdata <= (others => '0');
+            imag_config_tdata <= (others => '0');
+            real_config_tvalid <= '1';
+            imag_config_tvalid <= '1';
+
+            loop
+                wait until rising_edge(aclk);
+
+                assert real_config_tready = imag_config_tready
+                report "CONFIG TREADY mismatch in boundary test"
+                    severity error;
+
+                exit when real_config_tready = '1' and imag_config_tready = '1';
+
+                timeout_counter := timeout_counter + 1;
+
+                assert timeout_counter < C_TIMEOUT
+                report "Timeout waiting for CONFIG TREADY in boundary test"
+                    severity failure;
+            end loop;
+
+            dbg_config_accept <= '1';
+            dbg_config_set_index <= 0;
+            dbg_real_config_accept <= '1';
+            dbg_imag_config_accept <= '1';
+            boundary_config_committed <= '1';
+
+            wait until rising_edge(aclk);
+            dbg_config_accept <= '0';
+            dbg_real_config_accept <= '0';
+            dbg_imag_config_accept <= '0';
+            real_config_tvalid <= '0';
+            imag_config_tvalid <= '0';
+            real_config_tdata <= (others => '0');
+            imag_config_tdata <= (others => '0');
+        end procedure;
+
+        -- Keeps input samples active while reload and CONFIG occur so the
+        -- FIR pipeline boundary around the coefficient switch can be observed.
+        procedure run_config_boundary_test is
+            variable sample_index : integer := 0;
+            variable reload_slot : integer := 0;
+            variable coefficient_index : integer := 0;
+            variable clock_cycle_count : integer := 0;
+            variable data_active : boolean := false;
+            variable data_done : boolean := false;
+            variable real_reload_active : boolean := false;
+            variable imag_reload_active : boolean := false;
+            variable reload_beat_pending : boolean := false;
+            variable reload_set_loaded : boolean := false;
+            variable real_config_active : boolean := false;
+            variable imag_config_active : boolean := false;
+            variable config_started : boolean := false;
+            variable config_done : boolean := false;
+            variable timeout_counter : integer := 0;
+            variable current_real_word : integer := 0;
+            variable current_imag_word : integer := 0;
+            variable input_accepted : boolean := false;
+            variable real_config_accepted : boolean := false;
+            variable imag_config_accepted : boolean := false;
+            variable reload_start_time : time := 0 ns;
+            variable reload_last_time : time := 0 ns;
+            variable config_start_time : time := 0 ns;
+            variable config_accept_time : time := 0 ns;
+            variable reload_time : time := 0 ns;
+            variable config_time : time := 0 ns;
+            variable reload_plus_config_time : time := 0 ns;
+            variable reload_cycle_count : integer := 0;
+            variable config_cycle_count : integer := 0;
+            variable reload_plus_config_cycle_count : integer := 0;
+        begin
+            loop
+                if not data_active and not data_done then
+                    s_axis_tdata <= std_logic_vector(to_signed(0, 16)) &
+                        std_logic_vector(to_signed(1, 16));
+
+                    if sample_index = C_BOUNDARY_PACKET_LENGTH - 1 then
+                        s_axis_tlast <= '1';
+                    else
+                        s_axis_tlast <= '0';
+                    end if;
+
+                    s_axis_tvalid <= '1';
+                    data_active := true;
+                end if;
+
+                if clock_cycle_count >= C_BOUNDARY_RELOAD_START_CYCLE and
+                    not config_started and
+                    not reload_set_loaded and
+                    not reload_beat_pending then
+
+                    coefficient_index := C_RELOAD_ORDER(reload_slot);
+                    current_real_word :=
+                        reload_real_coefficient(0, coefficient_index);
+                    current_imag_word :=
+                        reload_imag_coefficient(0, coefficient_index);
+
+                    real_reload_tdata <= std_logic_vector(
+                        to_signed(current_real_word, real_reload_tdata'LENGTH)
+                        );
+                    imag_reload_tdata <= std_logic_vector(
+                        to_signed(current_imag_word, imag_reload_tdata'LENGTH)
+                        );
+
+                    if reload_slot = C_RELOAD_WORD_COUNT - 1 then
+                        real_reload_tlast <= '1';
+                        imag_reload_tlast <= '1';
+                    else
+                        real_reload_tlast <= '0';
+                        imag_reload_tlast <= '0';
+                    end if;
+
+                    real_reload_tvalid <= '1';
+                    imag_reload_tvalid <= '1';
+                    real_reload_active := true;
+                    imag_reload_active := true;
+                    reload_beat_pending := true;
+                end if;
+
+                if reload_set_loaded and not config_started and not config_done then
+                    real_config_tdata <= (others => '0');
+                    imag_config_tdata <= (others => '0');
+                    real_config_tvalid <= '1';
+                    imag_config_tvalid <= '1';
+                    real_config_active := true;
+                    imag_config_active := true;
+                    config_started := true;
+                    config_start_time := now;
+                end if;
+
+                wait until rising_edge(aclk);
+                clock_cycle_count := clock_cycle_count + 1;
+                dbg_input_accept <= '0';
+                dbg_reload_accept <= '0';
+                dbg_config_accept <= '0';
+                dbg_real_config_accept <= '0';
+                dbg_imag_config_accept <= '0';
+                dbg_config_during_input_accept <= '0';
+                input_accepted := false;
+                real_config_accepted := false;
+                imag_config_accepted := false;
+
+                if data_active and s_axis_tready = '1' then
+                    input_accepted := true;
+                    dbg_input_accept <= '1';
+                    s_axis_tvalid <= '0';
+                    s_axis_tlast <= '0';
+                    s_axis_tdata <= (others => '0');
+                    data_active := false;
+
+                    if sample_index = C_BOUNDARY_PACKET_LENGTH - 1 then
+                        data_done := true;
+                    else
+                        sample_index := sample_index + 1;
+                    end if;
+                end if;
+
+                if real_reload_active and real_reload_tready = '1' then
+                    real_reload_tvalid <= '0';
+                    real_reload_tlast <= '0';
+                    real_reload_tdata <= (others => '0');
+                    real_reload_active := false;
+                end if;
+
+                if imag_reload_active and imag_reload_tready = '1' then
+                    imag_reload_tvalid <= '0';
+                    imag_reload_tlast <= '0';
+                    imag_reload_tdata <= (others => '0');
+                    imag_reload_active := false;
+                end if;
+
+                if reload_beat_pending and not real_reload_active and
+                    not imag_reload_active then
+
+                    if reload_slot = 0 then
+                        reload_start_time := now;
+                    end if;
+
+                    if reload_slot = C_RELOAD_WORD_COUNT - 1 then
+                        reload_last_time := now;
+                    end if;
+
+                    dbg_reload_accept <= '1';
+                    dbg_reload_set_index <= 0;
+                    dbg_reload_slot <= reload_slot;
+                    dbg_reload_real_word <= std_logic_vector(
+                        to_signed(current_real_word, 16)
+                        );
+                    dbg_reload_imag_word <= std_logic_vector(
+                        to_signed(current_imag_word, 16)
+                        );
+
+                    if reload_slot /= C_RELOAD_WORD_COUNT - 1 then
+                        reload_slot := reload_slot + 1;
+                    else
+                        reload_set_loaded := true;
+                    end if;
+
+                    reload_beat_pending := false;
+                end if;
+
+                if real_config_active or imag_config_active then
+                    assert real_config_tready = imag_config_tready
+                    report "CONFIG TREADY mismatch during boundary test"
+                        severity error;
+                end if;
+
+                if real_config_active and real_config_tready = '1' then
+                    real_config_accepted := true;
+                    dbg_real_config_accept <= '1';
+                    real_config_tvalid <= '0';
+                    real_config_tdata <= (others => '0');
+                    real_config_active := false;
+                end if;
+
+                if imag_config_active and imag_config_tready = '1' then
+                    imag_config_accepted := true;
+                    dbg_imag_config_accept <= '1';
+                    imag_config_tvalid <= '0';
+                    imag_config_tdata <= (others => '0');
+                    imag_config_active := false;
+                end if;
+
+                if config_started and not real_config_active and
+                    not imag_config_active and not config_done then
+
+                    assert not data_done
+                    report "Boundary CONFIG was accepted only after the input packet ended"
+                        severity error;
+
+                    dbg_config_accept <= '1';
+                    dbg_config_set_index <= 0;
+                    if input_accepted and real_config_accepted and
+                        imag_config_accepted then
+
+                        dbg_config_during_input_accept <= '1';
+                    end if;
+
+                    boundary_config_committed <= '1';
+                    config_done := true;
+                    config_accept_time := now;
+                    reload_time := reload_last_time - reload_start_time;
+                    config_time := config_accept_time - config_start_time;
+                    reload_plus_config_time := config_accept_time - reload_start_time;
+                    reload_cycle_count := reload_time / C_CLK_PERIOD;
+                    config_cycle_count := config_time / C_CLK_PERIOD;
+                    reload_plus_config_cycle_count :=
+                        reload_plus_config_time / C_CLK_PERIOD;
+
+                    report "Boundary reload timing: reload=" &
+                        time'image(reload_time) &
+                        " (" &
+                        integer'image(reload_cycle_count) &
+                        " cycles), config_after_reload=" &
+                        time'image(config_time) &
+                        " (" &
+                        integer'image(config_cycle_count) &
+                        " cycles), reload_plus_config=" &
+                        time'image(reload_plus_config_time) &
+                        " (" &
+                        integer'image(reload_plus_config_cycle_count) &
+                        " cycles)"
+                        severity note;
+                end if;
+
+                exit when data_done and config_done;
+
+                timeout_counter := timeout_counter + 1;
+
+                if timeout_counter >= C_TIMEOUT then
+                    report "Timeout during the CONFIG boundary test: slot=" &
+                        integer'image(reload_slot) &
+                        ", sample_index=" &
+                        integer'image(sample_index) &
+                        ", clock_cycle_count=" &
+                        integer'image(clock_cycle_count) &
+                        ", data_done=" &
+                        boolean'image(data_done) &
+                        ", reload_set_loaded=" &
+                        boolean'image(reload_set_loaded) &
+                        ", reload_beat_pending=" &
+                        boolean'image(reload_beat_pending) &
+                        ", real_reload_active=" &
+                        boolean'image(real_reload_active) &
+                        ", imag_reload_active=" &
+                        boolean'image(imag_reload_active) &
+                        ", config_started=" &
+                        boolean'image(config_started) &
+                        ", config_done=" &
+                        boolean'image(config_done)
+                        severity failure;
+                end if;
+            end loop;
+
+            s_axis_tvalid <= '0';
+            s_axis_tlast <= '0';
+            s_axis_tdata <= (others => '0');
+            real_reload_tvalid <= '0';
+            real_reload_tlast <= '0';
+            real_reload_tdata <= (others => '0');
+            imag_reload_tvalid <= '0';
+            imag_reload_tlast <= '0';
+            imag_reload_tdata <= (others => '0');
+            real_config_tvalid <= '0';
+            real_config_tdata <= (others => '0');
+            imag_config_tvalid <= '0';
+            imag_config_tdata <= (others => '0');
+        end procedure;
+
         procedure send_active_packet_with_reload is
             variable sample_index : integer := 0;
             variable reload_set_index : integer range 0 to C_RELOAD_SET_COUNT - 1 := 0;
@@ -272,10 +689,20 @@ begin
             variable input_accepted : boolean := false;
             variable real_config_accepted : boolean := false;
             variable imag_config_accepted : boolean := false;
+            variable clock_cycle_count : integer := 0;
+            variable next_reload_start_cycle : integer :=
+                C_RELOAD_START_SAMPLE * C_FIR_SAMPLE_PERIOD;
+            variable reload_start_time : time := 0 ns;
+            variable reload_last_time : time := 0 ns;
+            variable config_start_time : time := 0 ns;
+            variable config_accept_time : time := 0 ns;
+            variable reload_time : time := 0 ns;
+            variable config_time : time := 0 ns;
+            variable reload_plus_config_time : time := 0 ns;
+            variable reload_cycle_count : integer := 0;
+            variable config_cycle_count : integer := 0;
+            variable reload_plus_config_cycle_count : integer := 0;
         begin
-            report "Starting the single Phase-1 active-traffic repeated reload test"
-                severity note;
-
             loop
                 if not data_active and not data_done then
                     s_axis_tdata <= std_logic_vector(to_signed(0, 16)) & std_logic_vector(to_signed(1, 16));
@@ -290,7 +717,7 @@ begin
                     data_active := true;
                 end if;
 
-                if sample_index >= C_RELOAD_START_SAMPLE and
+                if clock_cycle_count >= next_reload_start_cycle and
                     not all_reload_sets_done and
                     not config_started and
                     not reload_set_loaded and
@@ -309,7 +736,7 @@ begin
                         to_signed(current_imag_word, imag_reload_tdata'LENGTH)
                         );
 
-                    if reload_slot = C_TAP_COUNT - 1 then
+                    if reload_slot = C_RELOAD_WORD_COUNT - 1 then
                         real_reload_tlast <= '1';
                         imag_reload_tlast <= '1';
                     else
@@ -336,14 +763,12 @@ begin
                     real_config_active := true;
                     imag_config_active := true;
                     config_started := true;
+                    config_start_time := now;
 
-                    report "Starting CONFIG for reload set " &
-                        integer'image(reload_set_index) &
-                        " while the input packet is still active"
-                        severity note;
                 end if;
 
                 wait until rising_edge(aclk);
+                clock_cycle_count := clock_cycle_count + 1;
 
                 dbg_reload_accept <= '0';
                 dbg_config_accept <= '0';
@@ -386,6 +811,14 @@ begin
 
                 if reload_beat_pending and not real_reload_active and not imag_reload_active then
 
+                    if reload_slot = 0 then
+                        reload_start_time := now;
+                    end if;
+
+                    if reload_slot = C_RELOAD_WORD_COUNT - 1 then
+                        reload_last_time := now;
+                    end if;
+
                     dbg_reload_accept <= '1';
                     dbg_reload_set_index <= reload_set_index;
                     dbg_reload_slot <= reload_slot;
@@ -396,14 +829,7 @@ begin
                         to_signed(current_imag_word, 16)
                         );
 
-                    report "Reload set " &
-                        integer'image(reload_set_index) &
-                        ", slot " &
-                        integer'image(reload_slot) &
-                        " accepted during active input traffic"
-                        severity note;
-
-                    if reload_slot /= C_TAP_COUNT - 1 then
+                    if reload_slot /= C_RELOAD_WORD_COUNT - 1 then
                         reload_slot := reload_slot + 1;
                     else
                         reload_set_loaded := true;
@@ -447,10 +873,29 @@ begin
                         dbg_config_during_input_accept <= '1';
                     end if;
                     config_done := true;
+                    config_accept_time := now;
+                    reload_time := reload_last_time - reload_start_time;
+                    config_time := config_accept_time - config_start_time;
+                    reload_plus_config_time := config_accept_time - reload_start_time;
+                    reload_cycle_count := reload_time / C_CLK_PERIOD;
+                    config_cycle_count := config_time / C_CLK_PERIOD;
+                    reload_plus_config_cycle_count := reload_plus_config_time / C_CLK_PERIOD;
 
-                    report "CONFIG for reload set " &
+                    report "Reload timing for set " &
                         integer'image(reload_set_index) &
-                        " accepted during active input traffic"
+                        ": reload=" &
+                        time'image(reload_time) &
+                        " (" &
+                        integer'image(reload_cycle_count) &
+                        " cycles), config_after_reload=" &
+                        time'image(config_time) &
+                        " (" &
+                        integer'image(config_cycle_count) &
+                        " cycles), reload_plus_config=" &
+                        time'image(reload_plus_config_time) &
+                        " (" &
+                        integer'image(reload_plus_config_cycle_count) &
+                        " cycles)"
                         severity note;
 
                     if reload_set_index = C_RELOAD_SET_COUNT - 1 then
@@ -461,6 +906,8 @@ begin
                         reload_set_loaded := false;
                         config_started := false;
                         config_done := false;
+                        next_reload_start_cycle :=
+                            next_reload_start_cycle + C_FU_PERIOD_CYCLES;
                     end if;
                 end if;
 
@@ -468,9 +915,33 @@ begin
 
                 timeout_counter := timeout_counter + 1;
 
-                assert timeout_counter < C_TIMEOUT
-                report "Timeout during the active-traffic reload test"
-                    severity failure;
+                if timeout_counter >= C_TIMEOUT then
+                    report "Timeout during the active-traffic reload test: set=" &
+                        integer'image(reload_set_index) &
+                        ", slot=" &
+                        integer'image(reload_slot) &
+                        ", sample_index=" &
+                        integer'image(sample_index) &
+                        ", clock_cycle_count=" &
+                        integer'image(clock_cycle_count) &
+                        ", next_reload_start_cycle=" &
+                        integer'image(next_reload_start_cycle) &
+                        ", data_done=" &
+                        boolean'image(data_done) &
+                        ", reload_set_loaded=" &
+                        boolean'image(reload_set_loaded) &
+                        ", reload_beat_pending=" &
+                        boolean'image(reload_beat_pending) &
+                        ", real_reload_active=" &
+                        boolean'image(real_reload_active) &
+                        ", imag_reload_active=" &
+                        boolean'image(imag_reload_active) &
+                        ", config_started=" &
+                        boolean'image(config_started) &
+                        ", config_done=" &
+                        boolean'image(config_done)
+                        severity failure;
+                end if;
             end loop;
 
             s_axis_tvalid <= '0';
@@ -487,8 +958,6 @@ begin
             imag_config_tvalid <= '0';
             imag_config_tdata <= (others => '0');
 
-            report "Active-traffic reload packet completed"
-                severity note;
         end procedure;
 
         procedure wait_for_output_packet is
@@ -526,33 +995,44 @@ begin
         imag_config_tvalid <= '0';
         imag_config_tdata <= (others => '0');
         verification_packet_active <= '0';
-        current_packet_length <= C_ACTIVE_PACKET_LENGTH;
+        boundary_packet_active <= '0';
+        boundary_config_committed <= '0';
+        current_packet_length <= C_BOUNDARY_PACKET_LENGTH;
 
         wait_clock_cycles(10);
         aresetn <= '1';
         wait_clock_cycles(2);
 
-        verification_packet_active <= '0';
-        current_packet_length <= C_ACTIVE_PACKET_LENGTH;
-        send_active_packet_with_reload;
-        wait_for_output_packet;
-        wait_clock_cycles(5);
+        -- Original Phase-1 regression kept here for later re-enable.
+        -- verification_packet_active <= '0';
+        -- current_packet_length <= C_ACTIVE_PACKET_LENGTH;
+        -- send_active_packet_with_reload;
+        -- wait_for_output_packet;
+        -- wait_clock_cycles(5);
+        --
+        -- verification_packet_active <= '0';
+        -- current_packet_length <= C_TAP_COUNT;
+        -- send_zero_flush_packet;
+        -- wait_for_output_packet;
+        -- wait_clock_cycles(5);
+        --
+        -- verification_packet_active <= '1';
+        -- current_packet_length <= C_VERIFY_PACKET_LENGTH;
+        -- send_verification_impulse;
+        -- wait_for_output_packet;
+        -- wait_clock_cycles(10);
 
-        -- Flush the FIR delay line so the following impulse measures only the
-        -- committed coefficient set, not leftover samples from the active packet.
-        verification_packet_active <= '0';
-        current_packet_length <= C_TAP_COUNT;
-        send_zero_flush_packet;
-        wait_for_output_packet;
-        wait_clock_cycles(5);
-
-        verification_packet_active <= '1';
-        current_packet_length <= C_VERIFY_PACKET_LENGTH;
-        send_verification_impulse;
+        -- Active scenario for the supervisor question:
+        -- observe the output around CONFIG without zero-flushing the FIR.
+        boundary_packet_active <= '1';
+        current_packet_length <= C_BOUNDARY_PACKET_LENGTH;
+        run_config_boundary_test;
         wait_for_output_packet;
         wait_clock_cycles(10);
 
-        report "Single Phase-1 coefficient reload test completed"
+        boundary_packet_active <= '0';
+
+        report "CONFIG-boundary coefficient reload test completed"
             severity note;
 
         wait;
@@ -565,16 +1045,25 @@ begin
         variable expected_last_index : integer;
         variable expected_i : integer;
         variable expected_q : integer;
+        variable verification_coefficient_index : integer;
         variable output_line : line;
         variable header_written : boolean := false;
+        variable boundary_config_seen : boolean := false;
+        variable boundary_config_output_index : integer := 0;
+        variable boundary_new_response_seen : boolean := false;
+        variable boundary_stable_count : integer := 0;
     begin
         if rising_edge(aclk) then
             if aresetn = '0' then
                 output_index := 0;
+                boundary_config_seen := false;
+                boundary_config_output_index := 0;
+                boundary_new_response_seen := false;
+                boundary_stable_count := 0;
             elsif m_axis_tvalid = '1' and m_axis_tready = '1' then
 
                 if not header_written then
-                    write(output_line, string'("is_verification_packet,sample_index,output_i,output_q,expected_i,expected_q,tlast"));
+                    write(output_line, string'("is_verification_packet,is_boundary_packet,config_committed,sample_index,output_i,output_q,expected_i,expected_q,tlast"));
                     writeline(output_file, output_line);
                     header_written := true;
                 end if;
@@ -585,26 +1074,39 @@ begin
                 expected_q := 0;
 
                 if verification_packet_active = '1' then
-                    case output_index is
-                        when 0 =>
-                            expected_i := 5;
-                            expected_q := 0;
+                    verification_coefficient_index := output_index - C_VERIFY_RESPONSE_OFFSET;
 
-                        when 1 =>
-                            expected_i := 1;
-                            expected_q := 2;
+                    if verification_coefficient_index >= 0 and
+                        verification_coefficient_index < C_TAP_COUNT then
 
-                        when 2 =>
-                            expected_i := -2;
-                            expected_q := -2;
-
-                        when others =>
-                            expected_i := 0;
-                            expected_q := 0;
-                    end case;
+                        expected_i := reload_real_coefficient(
+                            C_RELOAD_SET_COUNT - 1,
+                            verification_coefficient_index
+                            );
+                        expected_q := reload_imag_coefficient(
+                            C_RELOAD_SET_COUNT - 1,
+                            verification_coefficient_index
+                            );
+                    end if;
                 end if;
 
                 if verification_packet_active = '1' then
+                    write(output_line, string'("1"));
+                else
+                    write(output_line, string'("0"));
+                end if;
+
+                write(output_line, string'(","));
+
+                if boundary_packet_active = '1' then
+                    write(output_line, string'("1"));
+                else
+                    write(output_line, string'("0"));
+                end if;
+
+                write(output_line, string'(","));
+
+                if boundary_config_committed = '1' then
                     write(output_line, string'("1"));
                 else
                     write(output_line, string'("0"));
@@ -630,37 +1132,45 @@ begin
 
                 writeline(output_file, output_line);
 
-                report "Phase-1 active reload output " &
-                    integer'image(output_index) &
-                    ": I=" &
-                    integer'image(output_i) &
-                    ", Q=" &
-                    integer'image(output_q) &
-                    ", TLAST=" &
-                    std_logic'image(m_axis_tlast);
-
                 if verification_packet_active = '1' then
-                    case output_index is
-                        when 0 =>
-                            assert output_i = 5 and output_q = 0
-                            report "Verification impulse mismatch at tap 0"
-                                severity error;
+                    assert output_i = expected_i and output_q = expected_q
+                    report "Verification impulse output does not match the expected 128-tap response"
+                        severity error;
+                end if;
 
-                        when 1 =>
-                            assert output_i = 1 and output_q = 2
-                            report "Verification impulse mismatch at tap 1"
-                                severity error;
+                if boundary_packet_active = '1' then
+                    if boundary_config_committed = '1' and
+                        not boundary_config_seen then
 
-                        when 2 =>
-                            assert output_i = -2 and output_q = -2
-                            report "Verification impulse mismatch at tap 2"
-                                severity error;
+                        boundary_config_seen := true;
+                        boundary_config_output_index := output_index;
+                    end if;
 
-                        when others =>
-                            assert output_i = 0 and output_q = 0
-                            report "Verification impulse has unexpected non-zero output"
+                    if boundary_config_seen then
+                        if output_i = C_BOUNDARY_EXPECTED_I and
+                            output_q = C_BOUNDARY_EXPECTED_Q then
+
+                            if not boundary_new_response_seen then
+                                report "Boundary test: new coefficient response observed at output sample " &
+                                    integer'image(output_index) &
+                                    " after CONFIG sample " &
+                                    integer'image(boundary_config_output_index)
+                                    severity note;
+                            end if;
+
+                            boundary_new_response_seen := true;
+                            boundary_stable_count := boundary_stable_count + 1;
+                        elsif boundary_new_response_seen then
+                            assert false
+                            report "Boundary test: output changed after new coefficient response became stable"
                                 severity error;
-                    end case;
+                        end if;
+
+                        assert output_index - boundary_config_output_index <=
+                            C_BOUNDARY_SETTLE_LIMIT or boundary_new_response_seen
+                        report "Boundary test: new coefficient response was not observed within the settle limit"
+                            severity error;
+                    end if;
                 end if;
 
                 if m_axis_tlast = '1' then
@@ -669,6 +1179,16 @@ begin
                     assert output_index = expected_last_index
                     report "TLAST received at the wrong output index"
                         severity error;
+
+                    if boundary_packet_active = '1' then
+                        assert boundary_new_response_seen
+                        report "Boundary test: new coefficient response was never observed"
+                            severity error;
+
+                        assert boundary_stable_count >= C_BOUNDARY_STABLE_SAMPLE_COUNT
+                        report "Boundary test: new coefficient response was not stable for enough samples"
+                            severity error;
+                    end if;
 
                     output_index := 0;
                 else
