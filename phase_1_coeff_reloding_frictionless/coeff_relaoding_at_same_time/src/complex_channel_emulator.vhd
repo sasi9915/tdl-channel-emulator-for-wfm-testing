@@ -40,7 +40,11 @@ entity complex_channel_emulator is
         m_axis_tvalid : out std_logic;
         m_axis_tready : in std_logic;
         m_axis_tdata : out std_logic_vector(79 downto 0);
-        m_axis_tlast : out std_logic
+        m_axis_tlast : out std_logic;
+
+        -- FIR reload status events from both real and imaginary FIR paths.
+        event_reload_tlast_missing : out std_logic;
+        event_reload_tlast_unexpected : out std_logic
     );
 end entity;
 
@@ -83,6 +87,11 @@ architecture rtl of complex_channel_emulator is
     -- Complex result, one extra bit for addition/subtraction
     signal w_output_i : signed(37 downto 0);
     signal w_output_q : signed(37 downto 0);
+
+    signal w_real_reload_tlast_missing : std_logic;
+    signal w_real_reload_tlast_unexpected : std_logic;
+    signal w_imag_reload_tlast_missing : std_logic;
+    signal w_imag_reload_tlast_unexpected : std_logic;
 
 begin
 
@@ -163,6 +172,8 @@ begin
     m_axis_tdata(39 downto 0) <= std_logic_vector(resize(w_output_i, 40));  -- Place each 38-bit result in a sign-extended 40-bit field.
     m_axis_tdata(79 downto 40) <= std_logic_vector(resize(w_output_q, 40)); -- Place each 38-bit result in a sign-extended 40-bit field.
     m_axis_tlast <= w_real_m_tlast and w_output_valid;
+    event_reload_tlast_missing <= w_real_reload_tlast_missing or w_imag_reload_tlast_missing;
+    event_reload_tlast_unexpected <= w_real_reload_tlast_unexpected or w_imag_reload_tlast_unexpected;
 
 
     -- FIR using the real channel coefficients hR
@@ -190,8 +201,8 @@ begin
             m_axis_data_tdata => w_real_m_tdata,
             m_axis_data_tlast => w_real_m_tlast,
 
-            event_s_reload_tlast_missing => OPEN,
-            event_s_reload_tlast_unexpected => OPEN
+            event_s_reload_tlast_missing => w_real_reload_tlast_missing,
+            event_s_reload_tlast_unexpected => w_real_reload_tlast_unexpected
         );
 
     -- FIR using the imaginary channel coefficients hI
@@ -219,8 +230,8 @@ begin
             m_axis_data_tdata => w_imag_m_tdata,
             m_axis_data_tlast => w_imag_m_tlast,
 
-            event_s_reload_tlast_missing => OPEN,
-            event_s_reload_tlast_unexpected => OPEN
+            event_s_reload_tlast_missing => w_imag_reload_tlast_missing,
+            event_s_reload_tlast_unexpected => w_imag_reload_tlast_unexpected
         );
 
 end architecture;
