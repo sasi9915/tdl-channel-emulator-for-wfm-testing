@@ -158,6 +158,8 @@ architecture rtl of tb_complex_channel_emulator is
     signal m_axis_tready           : std_logic := '1';
     signal m_axis_tdata            : std_logic_vector(79 downto 0);
     signal m_axis_tlast            : std_logic;
+    signal event_reload_tlast_missing : std_logic;
+    signal event_reload_tlast_unexpected : std_logic;
 
     signal real_reload_tvalid      : std_logic := '0';
     signal real_reload_tready      : std_logic;
@@ -232,8 +234,26 @@ begin
             m_axis_tvalid => m_axis_tvalid,
             m_axis_tready => m_axis_tready,
             m_axis_tdata => m_axis_tdata,
-            m_axis_tlast => m_axis_tlast
+            m_axis_tlast => m_axis_tlast,
+
+            event_reload_tlast_missing => event_reload_tlast_missing,
+            event_reload_tlast_unexpected => event_reload_tlast_unexpected
         );
+
+    fir_reload_event_monitor : process(aclk)
+    begin
+        if rising_edge(aclk) then
+            if aresetn = '1' then
+                assert event_reload_tlast_missing = '0'
+                report "FIR reload TLAST missing event detected"
+                    severity error;
+
+                assert event_reload_tlast_unexpected = '0'
+                report "FIR reload TLAST unexpected event detected"
+                    severity error;
+            end if;
+        end if;
+    end process;
 
     stimulus : process
 
