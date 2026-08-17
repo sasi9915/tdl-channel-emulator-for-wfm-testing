@@ -8,10 +8,11 @@ use std.textio.all;
 
 entity tb_coeff_ping_pong_buffer is
     generic(
-        C_TAP_COUNT         : positive := 32;
+        C_TAP_COUNT         : positive := 128;
         C_MAX_SETS_PER_BANK : positive := 600;
         C_SETS_PER_BANK     : positive := 8;
         C_COEFF_WIDTH       : positive := 16;
+        C_RAM_STYLE         : string   := "ultra";
         C_OUTPUT_FILE       : string   := "phase_4_ping_pong_buffer_output.csv"
     );
 end entity;
@@ -81,7 +82,7 @@ begin
             G_TAP_COUNT         => C_TAP_COUNT,
             G_MAX_SETS_PER_BANK => C_MAX_SETS_PER_BANK,
             G_COEFF_WIDTH       => C_COEFF_WIDTH,
-            G_RAM_STYLE         => "block"
+            G_RAM_STYLE         => C_RAM_STYLE
         )
         port map(
             aclk                 => aclk,
@@ -277,10 +278,19 @@ begin
             rd_en        <= '1';
             wait until rising_edge(aclk);
             rd_en <= '0';
-            wait for 1 ns;
+
+            for timeout_count in 0 to 8 loop
+                wait for 1 ns;
+
+                if rd_valid = '1' then
+                    exit;
+                end if;
+
+                wait until rising_edge(aclk);
+            end loop;
 
             assert rd_valid = '1'
-            report "Coefficient BRAM read did not become valid"
+            report "Coefficient memory read did not become valid"
             severity failure;
 
             assert rd_data = packed_coeff(bank_index, set_index, tap_index)
@@ -310,6 +320,15 @@ begin
         log_header;
         wait for 0 ns;
         log_event("test_start", -1, -1, -1, 0, 0);
+        report "Ping-pong buffer TB configuration: taps="
+               & integer'image(C_TAP_COUNT)
+               & ", max_sets_per_bank="
+               & integer'image(C_MAX_SETS_PER_BANK)
+               & ", active_test_sets="
+               & integer'image(C_SETS_PER_BANK)
+               & ", ram_style="
+               & C_RAM_STYLE
+        severity note;
 
         aresetn <= '0';
 
