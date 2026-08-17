@@ -4,10 +4,12 @@ use ieee.numeric_std.all;
 
 entity coeff_ping_pong_buffer is
     generic(
-        G_TAP_COUNT         : positive := 32;
+        G_TAP_COUNT         : positive := 128;
         G_MAX_SETS_PER_BANK : positive := 600;
         G_COEFF_WIDTH       : positive := 16;
-        G_RAM_STYLE         : string   := "block"
+        G_RAM_STYLE           : string   := "ultra";
+        G_URAM_READ_LATENCY   : positive := 3;
+        G_URAM_CASCADE_HEIGHT : natural := 4
     );
     port(
         aclk                 : in  std_logic;
@@ -31,6 +33,55 @@ entity coeff_ping_pong_buffer is
 end entity;
 
 architecture rtl of coeff_ping_pong_buffer is
+
+    -- component instantiation
+
+    component coeff_ping_pong_bram is
+        generic(
+            G_TAP_COUNT         : positive := 128;
+            G_MAX_SETS_PER_BANK : positive := 600;
+            G_DATA_WIDTH        : positive := 32;
+            G_RAM_STYLE         : string   := "block"
+        );
+        port(
+            clk          : in  std_logic;
+            wr_en        : in  std_logic;
+            wr_bank      : in  std_logic;
+            wr_set_index : in  integer range 0 to G_MAX_SETS_PER_BANK - 1;
+            wr_tap_index : in  integer range 0 to G_TAP_COUNT - 1;
+            wr_data      : in  std_logic_vector(G_DATA_WIDTH - 1 downto 0);
+            rd_en        : in  std_logic;
+            rd_bank      : in  std_logic;
+            rd_set_index : in  integer range 0 to G_MAX_SETS_PER_BANK - 1;
+            rd_tap_index : in  integer range 0 to G_TAP_COUNT - 1;
+            rd_data      : out std_logic_vector(G_DATA_WIDTH - 1 downto 0);
+            rd_valid     : out std_logic
+        );
+    end component;
+
+    component coeff_ping_pong_uram is
+        generic(
+            G_TAP_COUNT         : positive := 128;
+            G_MAX_SETS_PER_BANK : positive := 600;
+            G_DATA_WIDTH        : positive := 32;
+            G_READ_LATENCY      : positive := 3;
+            G_CASCADE_HEIGHT    : natural  := 4
+        );
+        port(
+            clk          : in  std_logic;
+            wr_en        : in  std_logic;
+            wr_bank      : in  std_logic;
+            wr_set_index : in  integer range 0 to G_MAX_SETS_PER_BANK - 1;
+            wr_tap_index : in  integer range 0 to G_TAP_COUNT - 1;
+            wr_data      : in  std_logic_vector(G_DATA_WIDTH - 1 downto 0);
+            rd_en        : in  std_logic;
+            rd_bank      : in  std_logic;
+            rd_set_index : in  integer range 0 to G_MAX_SETS_PER_BANK - 1;
+            rd_tap_index : in  integer range 0 to G_TAP_COUNT - 1;
+            rd_data      : out std_logic_vector(G_DATA_WIDTH - 1 downto 0);
+            rd_valid     : out std_logic
+        );
+    end component;
 
     subtype t_coeff_word is std_logic_vector((2 * G_COEFF_WIDTH) - 1 downto 0);
 
@@ -179,27 +230,54 @@ begin
         end if;
     end process;
 
-    coeff_memory_inst : entity work.coeff_ping_pong_bram
-        generic map(
-            G_TAP_COUNT         => G_TAP_COUNT,
-            G_MAX_SETS_PER_BANK => G_MAX_SETS_PER_BANK,
-            G_DATA_WIDTH        => 2 * G_COEFF_WIDTH,
-            G_RAM_STYLE         => G_RAM_STYLE
-        )
-        port map(
-            clk          => aclk,
-            wr_en        => w_write_accept,
-            wr_bank      => w_write_bank,
-            wr_set_index => w_safe_write_set_index,
-            wr_tap_index => w_safe_write_tap_index,
-            wr_data      => wr_data,
-            rd_en        => w_ram_read_enable,
-            rd_bank      => r_active_bank,
-            rd_set_index => w_safe_read_set_index,
-            rd_tap_index => rd_tap_index,
-            rd_data      => w_ram_read_data,
-            rd_valid     => w_ram_read_valid
-        );
+    gen_uram_memory : if G_RAM_STYLE = "ultra" generate
+        coeff_memory_inst : coeff_ping_pong_uram
+            generic map(
+                G_TAP_COUNT         => G_TAP_COUNT,
+                G_MAX_SETS_PER_BANK => G_MAX_SETS_PER_BANK,
+                G_DATA_WIDTH        => 2 * G_COEFF_WIDTH,
+                G_READ_LATENCY      => G_URAM_READ_LATENCY,
+                G_CASCADE_HEIGHT    => G_URAM_CASCADE_HEIGHT
+            )
+            port map(
+                clk          => aclk,
+                wr_en        => w_write_accept,
+                wr_bank      => w_write_bank,
+                wr_set_index => w_safe_write_set_index,
+                wr_tap_index => w_safe_write_tap_index,
+                wr_data      => wr_data,
+                rd_en        => w_ram_read_enable,
+                rd_bank      => r_active_bank,
+                rd_set_index => w_safe_read_set_index,
+                rd_tap_index => rd_tap_index,
+                rd_data      => w_ram_read_data,
+                rd_valid     => w_ram_read_valid
+            );
+    end generate;
+
+    gen_inferred_memory : if G_RAM_STYLE /= "ultra" generate
+        coeff_memory_inst : coeff_ping_pong_bram
+            generic map(
+                G_TAP_COUNT         => G_TAP_COUNT,
+                G_MAX_SETS_PER_BANK => G_MAX_SETS_PER_BANK,
+                G_DATA_WIDTH        => 2 * G_COEFF_WIDTH,
+                G_RAM_STYLE         => G_RAM_STYLE
+            )
+            port map(
+                clk          => aclk,
+                wr_en        => w_write_accept,
+                wr_bank      => w_write_bank,
+                wr_set_index => w_safe_write_set_index,
+                wr_tap_index => w_safe_write_tap_index,
+                wr_data      => wr_data,
+                rd_en        => w_ram_read_enable,
+                rd_bank      => r_active_bank,
+                rd_set_index => w_safe_read_set_index,
+                rd_tap_index => rd_tap_index,
+                rd_data      => w_ram_read_data,
+                rd_valid     => w_ram_read_valid
+            );
+    end generate;
 
     w_write_bank                <= r_active_bank when r_active_bank_valid = '0' else not r_active_bank;
     w_write_ready               <= not r_bank0_ready when w_write_bank = '0' else not r_bank1_ready;
