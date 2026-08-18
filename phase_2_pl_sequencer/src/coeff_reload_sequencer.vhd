@@ -90,9 +90,6 @@ architecture rtl of coeff_reload_sequencer is
 
     signal r_set_index         : integer range 0 to G_SET_COUNT - 1         := 0;
     signal r_reload_word_index : integer range 0 to G_RELOAD_WORD_COUNT - 1 := 0;
-    signal r_fifo_write_count  : integer range 0 to G_RELOAD_WORD_COUNT     := 0;
-
-    signal r_set_ready : std_logic := '0';
 
     signal r_real_reload_valid : std_logic                                    := '0';
     signal r_imag_reload_valid : std_logic                                    := '0';
@@ -112,11 +109,13 @@ architecture rtl of coeff_reload_sequencer is
     signal w_xpm_sync_i_buffer_fifo_wrreq  : std_logic;
     signal w_xpm_sync_fifo_i_fifo_rdreq  : std_logic;
     signal w_xpm_sync_fifo_i_buffer_fifo_q      : std_logic_vector(C_FIFO_WIDTH - 1 downto 0);
-    signal w_xpm_sync_fifo_i_buffer_fifo_usedw  : std_logic_vector(15 downto 0);
+    signal w_xpm_sync_fifo_i_buffer_fifo_usedw  : std_logic_vector(15 downto 0) := (others => '0');
+    signal w_fifo_usedw_unsigned : unsigned(15 downto 0);
     signal w_fifo_full   : std_logic;
     signal w_fifo_empty  : std_logic;
 
     signal w_set_input_ready : std_logic;
+    signal w_fifo_has_complete_set : std_logic;
     signal w_reload_last     : std_logic;
     signal w_reload_accepted : std_logic;
     signal w_config_accepted : std_logic;
@@ -154,8 +153,6 @@ begin
             state                 <= s_idle;
             r_set_index           <= 0;
             r_reload_word_index   <= 0;
-            r_fifo_write_count    <= 0;
-            r_set_ready           <= '0';
             r_real_reload_valid   <= '0';
             r_imag_reload_valid   <= '0';
             r_real_reload_data    <= (others => '0');
@@ -179,8 +176,6 @@ begin
             if enable = '0' then
                 r_set_index           <= 0;
                 r_reload_word_index   <= 0;
-                r_fifo_write_count    <= 0;
-                r_set_ready           <= '0';
                 r_real_reload_valid   <= '0';
                 r_imag_reload_valid   <= '0';
                 r_real_reload_data    <= (others => '0');
@@ -199,15 +194,6 @@ begin
                 r_real_config_valid   <= '0';
                 r_imag_config_valid   <= '0';
             else
-                if w_xpm_sync_i_buffer_fifo_wrreq = '1' then
-                    if r_fifo_write_count = G_RELOAD_WORD_COUNT - 1 then
-                        r_fifo_write_count <= 0;
-                        r_set_ready        <= '1';
-                    else
-                        r_fifo_write_count <= r_fifo_write_count + 1;
-                    end if;
-                end if;
-
                 case state is
                     when s_idle =>
                         r_set_index         <= 0;
@@ -222,9 +208,7 @@ begin
                         if w_fu_tick = '1' then
                             r_reload_word_index <= 0;
 
-                            if r_set_ready = '1' then
-                                r_set_ready <= '0';
-                            else
+                            if w_fifo_has_complete_set = '0' then
                                 r_missed_refill <= '1';
                             end if;
                         end if;
@@ -276,7 +260,7 @@ begin
         end if;
     end process;
 
-    process(state, enable, w_fu_tick, r_set_ready, r_set_index, r_reload_word_index, w_reload_accepted, w_config_accepted)
+    process(state, enable, w_fu_tick, w_fifo_has_complete_set, r_set_index, r_reload_word_index, w_reload_accepted, w_config_accepted)
     begin
         next_state <= state;
 
@@ -290,7 +274,7 @@ begin
                     next_state <= s_wait_fu;
 
                 when s_wait_fu =>
-                    if w_fu_tick = '1' and r_set_ready = '1' then
+                    if w_fu_tick = '1' and w_fifo_has_complete_set = '1' then
                         next_state <= s_reload;
                     end if;
 
@@ -324,12 +308,42 @@ begin
 
     w_fu_tick <= '1' when enable = '1' and fu_period_cycles /= to_unsigned(0, fu_period_cycles'length) and r_fu_counter = fu_period_cycles - 1 else '0';
     w_fifo_resetn <= aresetn;
-    w_set_input_ready <= '1' when enable = '1' and (state = s_idle or state = s_wait_fu) and r_set_ready = '0' and w_fifo_full = '0' else '0';
+    w_fifo_usedw_unsigned <= unsigned(w_xpm_sync_fifo_i_buffer_fifo_usedw);
+
+    process(aresetn, w_fifo_usedw_unsigned)
+    begin
+        if aresetn = '0' then
+            w_fifo_has_complete_set <= '0';
+        elsif w_fifo_usedw_unsigned >= to_unsigned(G_RELOAD_WORD_COUNT, w_fifo_usedw_unsigned'length) then
+            w_fifo_has_complete_set <= '1';
+        else
+            w_fifo_has_complete_set <= '0';
+        end if;
+    end process;
+
+    w_set_input_ready <= '1' when enable = '1' and state /= s_done and state /= s_fault_hold and w_fifo_full = '0' else '0';
     w_xpm_sync_i_buffer_fifo_wrreq <= coeff_set_tvalid and w_set_input_ready;
     w_reload_last     <= '1' when state = s_reload and r_reload_word_index = G_RELOAD_WORD_COUNT - 1 else '0';
     w_reload_accepted <= r_real_reload_valid and r_imag_reload_valid and real_reload_tready and imag_reload_tready;
     w_xpm_sync_fifo_i_fifo_rdreq      <= '1' when state = s_reload and r_real_reload_valid = '0' and r_imag_reload_valid = '0' and w_fifo_empty = '0' else '0';
     w_config_accepted <= r_real_config_valid and r_imag_config_valid and real_config_tready and imag_config_tready;
+
+    -- synthesis translate_off
+    process(aclk)
+    begin
+        if rising_edge(aclk) then
+            if aresetn = '1' and enable = '1' then
+                assert not (state = s_wait_fu and w_fu_tick = '1' and next_state = s_reload and w_fifo_has_complete_set = '0')
+                report "Reload started before one complete coefficient set was staged in the FIFO"
+                severity failure;
+
+                assert not (w_xpm_sync_fifo_i_fifo_rdreq = '1' and w_fifo_empty = '1')
+                report "Sequencer attempted to read an empty coefficient FIFO"
+                severity failure;
+            end if;
+        end if;
+    end process;
+    -- synthesis translate_on
 
 
 
@@ -360,8 +374,8 @@ begin
             g_DATA_WIDTH             => C_FIFO_WIDTH,
             g_DEPTH                  => G_FIFO_DEPTH,
             g_FWFT_MODE_ENA          => true,
-            g_ALMOST_FULL_THRESHOLD  => G_FIFO_DEPTH - 4,
-            g_ALMOST_EMPTY_THRESHOLD => 4
+            g_ALMOST_FULL_THRESHOLD  => G_FIFO_DEPTH - 5,
+            g_ALMOST_EMPTY_THRESHOLD => 5
         )
         port map(
             i_resetn       => w_fifo_resetn,

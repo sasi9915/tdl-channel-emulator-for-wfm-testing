@@ -236,19 +236,16 @@ begin
         wait for C_FIFO_RESET_WAIT_TIME;
         wait until rising_edge(aclk);
 
-        report "Starting FIFO-staged Fu reload test"
+        report "Starting FIFO-prefetch Fu reload test"
         severity note;
 
         enable <= '1';
         wait until rising_edge(aclk);
 
         load_coefficient_set(0);
-        wait until reload_set_done = '1' or missed_refill = '1' or reload_timing_error = '1';
-
         load_coefficient_set(1);
-        wait until reload_set_done = '1' or missed_refill = '1' or reload_timing_error = '1';
-
         load_coefficient_set(2);
+
         wait until reload_block_done = '1' or missed_refill = '1' or reload_timing_error = '1';
 
         wait_clock_cycles(5);
