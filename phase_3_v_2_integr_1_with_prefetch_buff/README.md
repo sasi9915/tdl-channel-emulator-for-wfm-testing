@@ -14,6 +14,7 @@ This folder connects the FIFO-prefetch version of `coeff_reload_sequencer` to th
 - The testbench no longer manually drives FIR reload/config AXIS signals.
 - The top wrapper connects the sequencer's real/imaginary reload and config ports into the channel emulator.
 - The testbench does not drive an external `fu_tick`; the sequencer generates Fu internally from `fu_period_cycles`.
+- The integration test uses the 128-tap FIR configuration's generated reload length: 133 reload words per coefficient set.
 
 ## Test Intent
 
@@ -33,9 +34,12 @@ The Phase 3 v2 test proves that:
 
 The testbench derives its timing from the proposal-style update rate:
 
-- AXIS test clock: 100 MHz (`C_CLK_PERIOD = 10 ns`)
+- AXIS test clock: 300 MHz (`C_CLK_PERIOD = 3333 ps`)
 - coefficient update rate: 6 kHz
-- Fu period register value: 16667 clock cycles
+- Fu period register value: 50000 clock cycles
+- FIR logical tap count: 128
+- FIR generated reload word count: 133
+- Prefetch FIFO depth: 512, which can stage more than three complete 133-word reload sets
 
 Timeout values are derived from those constants. The active packet is kept open while the sequencer performs all three Fu updates, then the testbench sends TLAST after `reload_block_done`.
 

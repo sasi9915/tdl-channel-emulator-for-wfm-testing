@@ -10,13 +10,13 @@ end entity;
 
 architecture rtl of tb_complex_channel_emulator is
 
-    constant C_TAP_COUNT : integer := 32;
-    constant C_RELOAD_WORD_COUNT : integer := C_TAP_COUNT;
-    constant C_PREFETCH_FIFO_DEPTH : integer := 96;
+    constant C_TAP_COUNT : integer := 128;
+    constant C_RELOAD_WORD_COUNT : integer := 133;
+    constant C_PREFETCH_FIFO_DEPTH : integer := 512;
     constant C_RELOAD_SET_COUNT : integer := 3;
-    constant C_AXIS_CLK_HZ : integer := 100_000_000;
+    constant C_AXIS_CLK_HZ : integer := 300_000_000;
     constant C_FU_HZ : integer := 6_000;
-    constant C_CLK_PERIOD : time := 10 ns;
+    constant C_CLK_PERIOD : time := 3333 ps;
     constant C_PHASE3_FU_PERIOD_CYCLES : integer := (C_AXIS_CLK_HZ + C_FU_HZ / 2) / C_FU_HZ;
     constant C_ACTIVE_PACKET_LENGTH : integer :=
         C_RELOAD_SET_COUNT * C_PHASE3_FU_PERIOD_CYCLES +
@@ -34,15 +34,30 @@ architecture rtl of tb_complex_channel_emulator is
     constant C_BACKPRESSURE_SEED : std_logic_vector(15 downto 0) := x"ACE1";
 
     type t_coefficient_array is array (0 to C_TAP_COUNT - 1) of integer;
-    type t_reload_order_array is array (0 to C_TAP_COUNT - 1) of integer range 0 to C_TAP_COUNT - 1;
+    type t_reload_order_array is array (0 to C_RELOAD_WORD_COUNT - 1) of integer range 0 to C_RELOAD_WORD_COUNT - 1;
 
     -- Replace this with the actual reload order displayed by the FIR Compiler
     -- coefficient reload tab if Vivado reports a different order.
     constant C_RELOAD_ORDER : t_reload_order_array := (
-        0, 1, 2, 3, 4, 5, 6, 7,
-        8, 9, 10, 11, 12, 13, 14, 15,
-        16, 17, 18, 19, 20, 21, 22, 23,
-        24, 25, 26, 27, 28, 29, 30, 31
+        126, 127, 128, 129, 130, 131, 132,
+        119, 120, 121, 122, 123, 124, 125,
+        112, 113, 114, 115, 116, 117, 118,
+        105, 106, 107, 108, 109, 110, 111,
+        98, 99, 100, 101, 102, 103, 104,
+        91, 92, 93, 94, 95, 96, 97,
+        84, 85, 86, 87, 88, 89, 90,
+        77, 78, 79, 80, 81, 82, 83,
+        70, 71, 72, 73, 74, 75, 76,
+        63, 64, 65, 66, 67, 68, 69,
+        56, 57, 58, 59, 60, 61, 62,
+        49, 50, 51, 52, 53, 54, 55,
+        42, 43, 44, 45, 46, 47, 48,
+        35, 36, 37, 38, 39, 40, 41,
+        28, 29, 30, 31, 32, 33, 34,
+        21, 22, 23, 24, 25, 26, 27,
+        14, 15, 16, 17, 18, 19, 20,
+        7, 8, 9, 10, 11, 12, 13,
+        0, 1, 2, 3, 4, 5, 6
     );
 
     function reload_real_coefficient (
@@ -117,7 +132,7 @@ architecture rtl of tb_complex_channel_emulator is
         word_index : integer
     ) return std_logic_vector is
         variable packed_word : std_logic_vector(31 downto 0);
-        variable coefficient_index : integer range 0 to C_TAP_COUNT - 1;
+        variable coefficient_index : integer range 0 to C_RELOAD_WORD_COUNT - 1;
     begin
         coefficient_index := C_RELOAD_ORDER(word_index);
         packed_word(31 downto 16) :=
@@ -178,7 +193,7 @@ architecture rtl of tb_complex_channel_emulator is
 
     signal dbg_reload_accept       : std_logic := '0';
     signal dbg_reload_set_index    : integer range 0 to C_RELOAD_SET_COUNT - 1 := 0;
-    signal dbg_reload_slot         : integer range 0 to C_TAP_COUNT - 1 := 0;
+    signal dbg_reload_slot         : integer range 0 to C_RELOAD_WORD_COUNT - 1 := 0;
     signal dbg_reload_real_word    : std_logic_vector(15 downto 0) := (others => '0');
     signal dbg_reload_imag_word    : std_logic_vector(15 downto 0) := (others => '0');
     signal dbg_config_accept       : std_logic := '0';
@@ -579,7 +594,7 @@ begin
 
         wait_clock_cycles(10);
         aresetn <= '1';
-        wait_clock_cycles(2);
+        wait for 2000 ns;
         sequencer_enable <= '1';
         coeff_prefetch_enable <= '1';
         wait_clock_cycles(2);

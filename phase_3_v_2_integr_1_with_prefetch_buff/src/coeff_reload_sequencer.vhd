@@ -4,11 +4,11 @@ use ieee.numeric_std.all;
 
 entity coeff_reload_sequencer is
     generic(
-        G_RELOAD_WORD_COUNT : integer := 32;
+        G_RELOAD_WORD_COUNT : integer := 133;
         G_SET_COUNT         : integer := 3;
         G_COEFF_WIDTH       : integer := 16;
         G_CONFIG_WIDTH      : integer := 8;
-        G_FIFO_DEPTH        : integer := 64
+        G_FIFO_DEPTH        : integer := 512
     );
     port(
         aclk                : in  std_logic;
