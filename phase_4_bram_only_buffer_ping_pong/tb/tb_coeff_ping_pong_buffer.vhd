@@ -227,6 +227,37 @@ begin
             wait until rising_edge(aclk);
         end procedure;
 
+        -- write one set-sized slice of the inactive bank while the active bank remains readable
+        procedure write_bank_set_slice(
+            constant bank_index : integer;
+            constant set_index  : integer
+        ) is
+        begin
+            for tap_index in 0 to C_TAP_COUNT - 1 loop
+                wr_data <= packed_coeff(bank_index, set_index, tap_index);
+
+                if set_index = C_SETS_PER_BANK - 1 and tap_index = C_TAP_COUNT - 1 then
+                    wr_last <= '1';
+                else
+                    wr_last <= '0';
+                end if;
+
+                wr_valid <= '1';
+                wait until rising_edge(aclk);
+
+                assert wr_ready = '1'
+                report "Coefficient writer was not ready during an inactive-bank refill slice"
+                severity failure;
+
+                log_event("background_write_accept", bank_index, set_index, tap_index, coeff_real(bank_index, set_index, tap_index), coeff_imag(bank_index, set_index, tap_index));
+            end loop;
+
+            wr_valid <= '0';
+            wr_last  <= '0';
+            wr_data  <= (others => '0');
+            wait until rising_edge(aclk);
+        end procedure;
+
         -- write a full bank of coefficients to the ping-pong buffer, but do not assert TLAST on the final beat
         procedure write_bank_block_missing_final_last(
             constant bank_index : integer
@@ -462,22 +493,29 @@ begin
         clear_errors <= '0';
         wait until rising_edge(aclk);
 
-        -- second complete bank is written in the background while bank 0 remains the active read bank
-        report "Filling inactive bank while active bank remains readable"
+        -- fill the inactive bank set-by-set while bank 0 is being consumed by the sequencer side
+        report "Checking inactive bank refill while active bank is consumed"
         severity note;
 
-        write_bank_block(1);
+        for set_index in 0 to C_SETS_PER_BANK - 1 loop
+            check_coefficient(0, set_index, 0);
+            check_coefficient(0, set_index, 31);
 
-        assert active_set_available = '1' and consume_set_ready = '1'
-        report "Inactive bank was not filled while active bank remained protected"
-        severity failure;
+            write_bank_set_slice(1, set_index);
 
-        log_event("inactive_bank_filled", 1, 0, -1, 0, 0);
+            assert active_set_available = '1' and consume_set_ready = '1'
+            report "Active bank was not readable while inactive bank was being refilled"
+            severity failure;
 
-        check_coefficient(0, 0, 5);
+            if set_index /= C_SETS_PER_BANK - 1 then
+                consume_one_set(set_index);
+            end if;
+        end loop;
+
+        log_event("inactive_bank_filled_before_final_active_consume", 1, 0, -1, 0, 0);
 
         -- when both banks are full, extra writes must be backpressured without setting write_error
-        report "Checking ready-bank write blocking without false protocol error"
+        report "Checking ready-bank write blocking before handover"
         severity note;
 
         wr_valid <= '1';
@@ -494,17 +532,11 @@ begin
 
         log_event("ready_bank_write_blocked", -1, -1, -1, 1234, -1234);
 
-        check_coefficient(0, 0, 5);
-
-        -- after all sets from bank 0 are consumed, the buffer must swap atomically to ready bank 1
-        report "Consuming active bank and checking atomic swap"
+        -- the final consume from bank 0 is the bank-handover boundary seen by the sequencer side
+        report "Consuming final active set and checking immediate bank swap"
         severity note;
 
-        for set_index in 0 to C_SETS_PER_BANK - 1 loop
-            check_coefficient(0, set_index, 0);
-            check_coefficient(0, set_index, 31);
-            consume_one_set(set_index);
-        end loop;
+        consume_one_set(C_SETS_PER_BANK - 1);
 
         assert active_set_available = '1' and consume_set_ready = '1'
         report "Active bank did not swap after all active sets were consumed"

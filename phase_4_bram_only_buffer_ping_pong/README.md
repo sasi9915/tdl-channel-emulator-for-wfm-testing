@@ -46,6 +46,7 @@ The standalone testbench still uses 8 sets by default so simulation remains shor
 - missing final `wr_last` rejects the malformed write block
 - clearing a write-format error restarts the write position
 - inactive bank can be filled while active bank remains readable
+- inactive bank can be filled set-by-set while active bank sets are consumed, then swapped in immediately after the final active-bank consume
 - ready inactive bank blocks writes without falsely treating held `wr_valid` as an error
 - active bank swaps atomically after all sets are consumed
 - underrun asserts when active bank is exhausted and the next bank is not ready
