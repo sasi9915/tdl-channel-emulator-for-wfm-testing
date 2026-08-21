@@ -1,0 +1,10 @@
+!constraints/
+!constraints/**
+!ip/
+!ip/**/*.xci
+!sim/
+!sim/sync_vivado_imports.sh
+!sim/run_ghdl_axi_regs.sh
+!sim/run_vivado_axi_top.sh
+!sim/run_vivado_axi_top.tcl
+sim/ghdl_work*/
