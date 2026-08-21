@@ -76,13 +76,7 @@ entity channel_emulator_axi_top is
         dbg_real_config_tdata  : out std_logic_vector(G_CONFIG_WIDTH - 1 downto 0);
         dbg_imag_config_tvalid : out std_logic;
         dbg_imag_config_tready : out std_logic;
-        dbg_imag_config_tdata  : out std_logic_vector(G_CONFIG_WIDTH - 1 downto 0);
-        dbg_real_m_tvalid      : out std_logic;
-        dbg_real_m_tready      : out std_logic;
-        dbg_real_m_tlast       : out std_logic;
-        dbg_imag_m_tvalid      : out std_logic;
-        dbg_imag_m_tready      : out std_logic;
-        dbg_imag_m_tlast       : out std_logic
+        dbg_imag_config_tdata  : out std_logic_vector(G_CONFIG_WIDTH - 1 downto 0)
     );
 end entity;
 
@@ -195,13 +189,7 @@ begin
             dbg_real_config_tdata  => dbg_real_config_tdata,
             dbg_imag_config_tvalid => dbg_imag_config_tvalid,
             dbg_imag_config_tready => dbg_imag_config_tready,
-            dbg_imag_config_tdata  => dbg_imag_config_tdata,
-            dbg_real_m_tvalid      => dbg_real_m_tvalid,
-            dbg_real_m_tready      => dbg_real_m_tready,
-            dbg_real_m_tlast       => dbg_real_m_tlast,
-            dbg_imag_m_tvalid      => dbg_imag_m_tvalid,
-            dbg_imag_m_tready      => dbg_imag_m_tready,
-            dbg_imag_m_tlast       => dbg_imag_m_tlast
+            dbg_imag_config_tdata  => dbg_imag_config_tdata
         );
 
     reload_active       <= w_reload_active;

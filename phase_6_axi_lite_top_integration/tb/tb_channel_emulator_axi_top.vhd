@@ -268,12 +268,6 @@ architecture rtl of tb_channel_emulator_axi_top is
     signal dbg_imag_config_accept         : std_logic                                  := '0';
     signal dbg_config_during_input_accept : std_logic                                  := '0';
     signal dbg_output_backpressure        : std_logic                                  := '0';
-    signal dbg_real_m_tvalid              : std_logic;
-    signal dbg_real_m_tready              : std_logic;
-    signal dbg_real_m_tlast               : std_logic;
-    signal dbg_imag_m_tvalid              : std_logic;
-    signal dbg_imag_m_tready              : std_logic;
-    signal dbg_imag_m_tlast               : std_logic;
 
     signal verification_packet_active : std_logic                                  := '0';
     signal current_packet_length      : integer                                    := C_ACTIVE_PACKET_LENGTH;
@@ -359,13 +353,7 @@ begin
             dbg_real_config_tdata           => real_config_tdata,
             dbg_imag_config_tvalid          => imag_config_tvalid,
             dbg_imag_config_tready          => imag_config_tready,
-            dbg_imag_config_tdata           => imag_config_tdata,
-            dbg_real_m_tvalid               => dbg_real_m_tvalid,
-            dbg_real_m_tready               => dbg_real_m_tready,
-            dbg_real_m_tlast                => dbg_real_m_tlast,
-            dbg_imag_m_tvalid               => dbg_imag_m_tvalid,
-            dbg_imag_m_tready               => dbg_imag_m_tready,
-            dbg_imag_m_tlast                => dbg_imag_m_tlast
+            dbg_imag_config_tdata           => imag_config_tdata
         );
 
     output_backpressure_driver : process(aclk)
@@ -724,12 +712,6 @@ begin
                            ", tlast_seen=" & boolean'image(tlast_seen) &
                            ", handshake_count=" & integer'image(handshake_count) &
                            ", s_axis_tready=" & std_logic'image(s_axis_tready) &
-                           ", real_m_valid=" & std_logic'image(dbg_real_m_tvalid) &
-                           ", real_m_ready=" & std_logic'image(dbg_real_m_tready) &
-                           ", real_m_last=" & std_logic'image(dbg_real_m_tlast) &
-                           ", imag_m_valid=" & std_logic'image(dbg_imag_m_tvalid) &
-                           ", imag_m_ready=" & std_logic'image(dbg_imag_m_tready) &
-                           ", imag_m_last=" & std_logic'image(dbg_imag_m_tlast) &
                            ", reload_block_done=" & std_logic'image(sequencer_block_done) &
                            ", reload_timing_error=" & std_logic'image(sequencer_timing_error) &
                            ", coeff_bank_underrun=" & std_logic'image(coeff_bank_underrun) &

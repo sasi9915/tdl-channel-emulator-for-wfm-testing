@@ -40,14 +40,7 @@ entity complex_channel_emulator is
         m_axis_tvalid : out std_logic;
         m_axis_tready : in std_logic;
         m_axis_tdata : out std_logic_vector(79 downto 0);
-        m_axis_tlast : out std_logic;
-
-        dbg_real_m_tvalid : out std_logic;
-        dbg_real_m_tready : out std_logic;
-        dbg_real_m_tlast  : out std_logic;
-        dbg_imag_m_tvalid : out std_logic;
-        dbg_imag_m_tready : out std_logic;
-        dbg_imag_m_tlast  : out std_logic
+        m_axis_tlast : out std_logic
     );
 end entity;
 
@@ -218,14 +211,6 @@ begin
     m_axis_tdata(39 downto 0) <= std_logic_vector(resize(w_output_i, 40));  -- Place each 38-bit result in a sign-extended 40-bit field.
     m_axis_tdata(79 downto 40) <= std_logic_vector(resize(w_output_q, 40)); -- Place each 38-bit result in a sign-extended 40-bit field.
     m_axis_tlast <= w_real_m_tlast and w_output_valid;
-
-    dbg_real_m_tvalid <= w_real_m_tvalid;
-    dbg_real_m_tready <= w_real_m_tready;
-    dbg_real_m_tlast  <= w_real_m_tlast;
-    dbg_imag_m_tvalid <= w_imag_m_tvalid;
-    dbg_imag_m_tready <= w_imag_m_tready;
-    dbg_imag_m_tlast  <= w_imag_m_tlast;
-
 
     -- FIR using the real channel coefficients hR
     u_fir_real : fir_compiler_invest_real_comp
