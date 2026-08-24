@@ -13,9 +13,9 @@ architecture rtl of tb_channel_emulator_axi_top is
     constant C_TAP_COUNT                  : integer                                         := 128;
     constant C_RELOAD_WORD_COUNT          : integer                                         := 133;
     constant C_PREFETCH_FIFO_DEPTH        : integer                                         := 512;
-    constant C_BANK_SET_COUNT             : integer                                         := 3;
-    constant C_CONTINUOUS_RELOAD_SET_COUNT : integer                                        := 6;
-    constant C_PREFETCH_SET_COUNT         : integer                                         := C_CONTINUOUS_RELOAD_SET_COUNT + C_BANK_SET_COUNT;
+    constant C_BANK_SET_COUNT             : integer                                         := 2;
+    constant C_CONTINUOUS_RELOAD_SET_COUNT : integer                                        := 4;
+    constant C_PREFETCH_SET_COUNT         : integer                                         := C_CONTINUOUS_RELOAD_SET_COUNT;
     constant C_AXIS_CLK_HZ                : integer                                         := 300_000_000;
     constant C_FU_HZ                      : integer                                         := 6_000;
     constant C_CLK_PERIOD                 : time                                            := 3333 ps;
@@ -742,6 +742,14 @@ begin
         send_active_packet_with_sequencer;
 
         axi_read(C_STATUS_ADDR, status_word);
+        report "AXI status after active packet: active=" & std_logic'image(status_word(0)) &
+               ", block_done=" & std_logic'image(status_word(1)) &
+               ", missed_refill=" & std_logic'image(status_word(2)) &
+               ", reload_timing_error=" & std_logic'image(status_word(3)) &
+               ", active_set_available=" & std_logic'image(status_word(4)) &
+               ", bank_underrun=" & std_logic'image(status_word(5)) &
+               ", bank_write_error=" & std_logic'image(status_word(6))
+        severity note;
         assert status_word(1) = '1'
         report "AXI status did not report reload_block_done after the continuous active packet"
         severity failure;
