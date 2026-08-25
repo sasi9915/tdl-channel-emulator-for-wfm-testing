@@ -59,13 +59,7 @@ entity channel_emulator_prefetch_top is
         dbg_real_config_tdata  : out std_logic_vector(G_CONFIG_WIDTH - 1 downto 0);
         dbg_imag_config_tvalid : out std_logic;
         dbg_imag_config_tready : out std_logic;
-        dbg_imag_config_tdata  : out std_logic_vector(G_CONFIG_WIDTH - 1 downto 0);
-        dbg_real_m_tvalid      : out std_logic;
-        dbg_real_m_tready      : out std_logic;
-        dbg_real_m_tlast       : out std_logic;
-        dbg_imag_m_tvalid      : out std_logic;
-        dbg_imag_m_tready      : out std_logic;
-        dbg_imag_m_tlast       : out std_logic
+        dbg_imag_config_tdata  : out std_logic_vector(G_CONFIG_WIDTH - 1 downto 0)
     );
 end entity;
 
@@ -164,13 +158,7 @@ architecture rtl of channel_emulator_prefetch_top is
             m_axis_tvalid                : out std_logic;
             m_axis_tready                : in  std_logic;
             m_axis_tdata                 : out std_logic_vector(79 downto 0);
-            m_axis_tlast                 : out std_logic;
-            dbg_real_m_tvalid            : out std_logic;
-            dbg_real_m_tready            : out std_logic;
-            dbg_real_m_tlast             : out std_logic;
-            dbg_imag_m_tvalid            : out std_logic;
-            dbg_imag_m_tready            : out std_logic;
-            dbg_imag_m_tlast             : out std_logic
+            m_axis_tlast                 : out std_logic
         );
     end component;
 
@@ -399,13 +387,7 @@ begin
             m_axis_tvalid                => m_axis_tvalid,
             m_axis_tready                => m_axis_tready,
             m_axis_tdata                 => m_axis_tdata,
-            m_axis_tlast                 => m_axis_tlast,
-            dbg_real_m_tvalid            => dbg_real_m_tvalid,
-            dbg_real_m_tready            => dbg_real_m_tready,
-            dbg_real_m_tlast             => dbg_real_m_tlast,
-            dbg_imag_m_tvalid            => dbg_imag_m_tvalid,
-            dbg_imag_m_tready            => dbg_imag_m_tready,
-            dbg_imag_m_tlast             => dbg_imag_m_tlast
+            m_axis_tlast                 => m_axis_tlast
         );
 
     dbg_real_reload_tvalid <= real_reload_tvalid;
