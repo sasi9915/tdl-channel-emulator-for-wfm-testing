@@ -133,8 +133,10 @@ begin
         if aresetn = '0' then
             r_fu_counter <= (others => '0');
         elsif rising_edge(aclk) then
-            if enable = '0' or fu_period_cycles = to_unsigned(0, fu_period_cycles'length) then
+            if fu_period_cycles = to_unsigned(0, fu_period_cycles'length) then
                 r_fu_counter <= (others => '0');
+            elsif enable = '0' then
+                r_fu_counter <= r_fu_counter;
             elsif w_fu_tick = '1' then
                 r_fu_counter <= (others => '0');
             else
@@ -169,20 +171,7 @@ begin
                 r_reload_timing_error <= '0';
             end if;
 
-            if enable = '0' then
-                r_set_index           <= 0;
-                r_reload_word_index   <= 0;
-                r_real_reload_valid   <= '0';
-                r_imag_reload_valid   <= '0';
-                r_real_reload_data    <= (others => '0');
-                r_imag_reload_data    <= (others => '0');
-                r_reload_last         <= '0';
-                r_real_config_valid   <= '0';
-                r_imag_config_valid   <= '0';
-                r_reload_block_done   <= '0';
-                r_missed_refill       <= '0';
-                r_reload_timing_error <= '0';
-            elsif w_fu_tick = '1' and (state = s_reload or state = s_config or state = s_advance) then
+            if w_fu_tick = '1' and (state = s_reload or state = s_config or state = s_advance) then
                 r_reload_timing_error <= '1';
                 r_real_reload_valid   <= '0';
                 r_imag_reload_valid   <= '0';
@@ -269,9 +258,7 @@ begin
     begin
         next_state <= state;
 
-        if enable = '0' then
-            next_state <= s_idle;
-        elsif w_fu_tick = '1' and (state = s_reload or state = s_config or state = s_advance) then
+        if w_fu_tick = '1' and (state = s_reload or state = s_config or state = s_advance) then
             next_state <= s_fault_hold;
         else
             case state is
@@ -279,7 +266,7 @@ begin
                     next_state <= s_wait_fu;
 
                 when s_wait_fu =>
-                    if w_fu_tick = '1' and w_fifo_has_complete_set = '1' then
+                    if enable = '1' and w_fu_tick = '1' and w_fifo_has_complete_set = '1' then
                         next_state <= s_reload;
                     end if;
 

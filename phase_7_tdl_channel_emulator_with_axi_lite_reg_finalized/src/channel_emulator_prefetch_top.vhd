@@ -235,56 +235,48 @@ begin
             bank_rd_en             <= '0';
             bank_consume_set_valid <= '0';
 
-            if enable = '0' then
-                reader_state           <= s_bank_idle;
-                reader_word_index      <= 0;
-                bank_rd_tap_index      <= 0;
-                sequencer_coeff_tvalid <= '0';
-                sequencer_coeff_tdata  <= (others => '0');
-            else
-                case reader_state is
-                    when s_bank_idle =>
-                        sequencer_coeff_tvalid <= '0';
-                        reader_word_index      <= 0;
+            case reader_state is
+                when s_bank_idle =>
+                    sequencer_coeff_tvalid <= '0';
+                    reader_word_index      <= 0;
 
-                        if bank_active_set_available = '1' then
+                    if enable = '1' and bank_active_set_available = '1' then
+                        bank_rd_en        <= '1';
+                        bank_rd_tap_index <= 0;
+                        reader_state      <= s_bank_wait_data;
+                    end if;
+
+                when s_bank_wait_data =>
+                    if bank_rd_valid = '1' then
+                        sequencer_coeff_tdata  <= bank_rd_data;
+                        sequencer_coeff_tvalid <= '1';
+                        reader_state           <= s_bank_send_word;
+                    end if;
+
+                when s_bank_send_word =>
+                    if sequencer_coeff_tvalid = '1' and sequencer_coeff_tready = '1' then
+                        sequencer_coeff_tvalid <= '0';
+
+                        if reader_word_index = G_RELOAD_WORD_COUNT - 1 then
+                            bank_consume_set_valid <= '1';
+                            reader_state           <= s_bank_consume_set;
+                        else
+                            reader_word_index <= reader_word_index + 1;
+                            bank_rd_tap_index <= reader_word_index + 1;
                             bank_rd_en        <= '1';
-                            bank_rd_tap_index <= 0;
                             reader_state      <= s_bank_wait_data;
                         end if;
+                    end if;
 
-                    when s_bank_wait_data =>
-                        if bank_rd_valid = '1' then
-                            sequencer_coeff_tdata  <= bank_rd_data;
-                            sequencer_coeff_tvalid <= '1';
-                            reader_state           <= s_bank_send_word;
-                        end if;
+                when s_bank_consume_set =>
+                    bank_consume_set_valid <= '1';
 
-                    when s_bank_send_word =>
-                        if sequencer_coeff_tvalid = '1' and sequencer_coeff_tready = '1' then
-                            sequencer_coeff_tvalid <= '0';
-
-                            if reader_word_index = G_RELOAD_WORD_COUNT - 1 then
-                                bank_consume_set_valid <= '1';
-                                reader_state           <= s_bank_consume_set;
-                            else
-                                reader_word_index <= reader_word_index + 1;
-                                bank_rd_tap_index <= reader_word_index + 1;
-                                bank_rd_en        <= '1';
-                                reader_state      <= s_bank_wait_data;
-                            end if;
-                        end if;
-
-                    when s_bank_consume_set =>
-                        bank_consume_set_valid <= '1';
-
-                        if bank_consume_set_ready = '1' then
-                            bank_consume_set_valid <= '0';
-                            reader_word_index      <= 0;
-                            reader_state           <= s_bank_idle;
-                        end if;
-                end case;
-            end if;
+                    if bank_consume_set_ready = '1' then
+                        bank_consume_set_valid <= '0';
+                        reader_word_index      <= 0;
+                        reader_state           <= s_bank_idle;
+                    end if;
+            end case;
         end if;
     end process;
 

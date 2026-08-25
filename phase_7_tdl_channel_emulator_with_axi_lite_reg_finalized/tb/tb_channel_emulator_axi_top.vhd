@@ -15,7 +15,7 @@ architecture rtl of tb_channel_emulator_axi_top is
     constant C_PREFETCH_FIFO_DEPTH        : integer                                         := 512;
     constant C_BANK_SET_COUNT             : integer                                         := 2;
     constant C_CONTINUOUS_RELOAD_SET_COUNT : integer                                        := 4;
-    constant C_PREFETCH_SET_COUNT         : integer                                         := C_CONTINUOUS_RELOAD_SET_COUNT;
+    constant C_PREFETCH_SET_COUNT         : integer                                         := C_CONTINUOUS_RELOAD_SET_COUNT + C_BANK_SET_COUNT;
     constant C_AXIS_CLK_HZ                : integer                                         := 300_000_000;
     constant C_FU_HZ                      : integer                                         := 6_000;
     constant C_CLK_PERIOD                 : time                                            := 3333 ps;
@@ -277,6 +277,8 @@ architecture rtl of tb_channel_emulator_axi_top is
     signal coeff_set_tlast                 : std_logic                     := '0';
     signal coeff_prefetch_enable           : std_logic                     := '0';
     signal coeff_prefetch_done             : std_logic                     := '0';
+    signal coeff_recovery_enable           : std_logic                     := '0';
+    signal coeff_recovery_done             : std_logic                     := '0';
 
     signal dbg_input_accept               : std_logic                                  := '0';
     signal dbg_output_backpressure        : std_logic                                  := '0';
@@ -372,6 +374,7 @@ begin
         coeff_set_tdata     <= (others => '0');
         coeff_set_tlast     <= '0';
         coeff_prefetch_done <= '0';
+        coeff_recovery_done <= '0';
 
         wait until aresetn = '1';
         wait until coeff_prefetch_enable = '1';
@@ -399,6 +402,33 @@ begin
         coeff_set_tdata     <= (others => '0');
         coeff_set_tlast     <= '0';
         coeff_prefetch_done <= '1';
+
+        wait until coeff_recovery_enable = '1';
+        wait until rising_edge(aclk);
+
+        for set_index in C_PREFETCH_SET_COUNT to C_PREFETCH_SET_COUNT + C_BANK_SET_COUNT - 1 loop
+            for word_index in 0 to C_RELOAD_WORD_COUNT - 1 loop
+                coeff_set_tdata  <= pack_reload_word(set_index, word_index);
+
+                if (set_index mod C_BANK_SET_COUNT) = C_BANK_SET_COUNT - 1 and word_index = C_RELOAD_WORD_COUNT - 1 then
+                    coeff_set_tlast <= '1';
+                else
+                    coeff_set_tlast <= '0';
+                end if;
+
+                coeff_set_tvalid <= '1';
+
+                loop
+                    wait until rising_edge(aclk);
+                    exit when coeff_set_tready = '1';
+                end loop;
+            end loop;
+        end loop;
+
+        coeff_set_tvalid    <= '0';
+        coeff_set_tdata     <= (others => '0');
+        coeff_set_tlast     <= '0';
+        coeff_recovery_done <= '1';
 
         wait;
     end process;
@@ -579,12 +609,75 @@ begin
             variable data_active     : boolean := false;
             variable data_done       : boolean := false;
             variable last_sample      : boolean := false;
+            variable wait_pause_done  : boolean := false;
+            variable reload_pause_done : boolean := false;
+            variable pause_timeout_counter : integer := 0;
+            variable pause_status_word : std_logic_vector(C_AXI_DATA_WIDTH - 1 downto 0);
         begin
             report "Starting the Phase-7 AXI-Lite controlled active-traffic test"
             severity note;
 
             loop
                 dbg_input_accept               <= '0';
+
+                if not data_active and not wait_pause_done and sample_index >= C_FU_PERIOD_OUTPUT_SAMPLES / 4 then
+                    report "Pausing AXI-Lite enable while the sequencer is waiting for the first Fu tick"
+                    severity note;
+
+                    axi_write(C_CONTROL_ADDR, x"00000000");
+                    wait_clock_cycles(256);
+                    axi_read(C_STATUS_ADDR, pause_status_word);
+                    assert pause_status_word(0) = '0'
+                    report "Sequencer became active while enable was paused before the first Fu tick"
+                    severity failure;
+                    assert pause_status_word(2) = '0' and pause_status_word(3) = '0' and pause_status_word(6) = '0'
+                    report "Pause-before-Fu test raised reload/timing/write error bits"
+                    severity failure;
+
+                    axi_write(C_CONTROL_ADDR, x"00000001");
+                    wait_pause_done := true;
+                end if;
+
+                if not data_active and not reload_pause_done and sample_index >= C_FU_PERIOD_OUTPUT_SAMPLES then
+                    pause_timeout_counter := 0;
+
+                    loop
+                        axi_read(C_STATUS_ADDR, pause_status_word);
+                        exit when pause_status_word(0) = '1';
+                        wait_clock_cycles(1);
+                        pause_timeout_counter := pause_timeout_counter + 1;
+
+                        assert pause_timeout_counter < C_PHASE3_FU_PERIOD_CYCLES
+                        report "Timeout waiting for reload activity before active-update pause test"
+                        severity failure;
+                    end loop;
+
+                    report "Pausing AXI-Lite enable during an active reload/config update"
+                    severity note;
+
+                    axi_write(C_CONTROL_ADDR, x"00000000");
+                    pause_timeout_counter := 0;
+
+                    loop
+                        axi_read(C_STATUS_ADDR, pause_status_word);
+                        exit when pause_status_word(0) = '0';
+                        wait_clock_cycles(1);
+                        pause_timeout_counter := pause_timeout_counter + 1;
+
+                        assert pause_timeout_counter < C_INPUT_READY_TIMEOUT_CYCLES
+                        report "Reload/config update did not finish after enable was paused"
+                        severity failure;
+                    end loop;
+
+                    wait_clock_cycles(256);
+                    axi_read(C_STATUS_ADDR, pause_status_word);
+                    assert pause_status_word(2) = '0' and pause_status_word(3) = '0' and pause_status_word(6) = '0'
+                    report "Pause-during-update test raised reload/timing/write error bits"
+                    severity failure;
+
+                    axi_write(C_CONTROL_ADDR, x"00000001");
+                    reload_pause_done := true;
+                end if;
 
                 if not data_active and not data_done then
                     s_axis_tdata <= std_logic_vector(to_signed(0, 16)) & std_logic_vector(to_signed(1, 16));
@@ -683,6 +776,7 @@ begin
 
         variable status_word : std_logic_vector(C_AXI_DATA_WIDTH - 1 downto 0);
         variable readback_word : std_logic_vector(C_AXI_DATA_WIDTH - 1 downto 0);
+        variable recovery_timeout_counter : integer := 0;
 
     begin
         aresetn                    <= '0';
@@ -753,8 +847,8 @@ begin
         assert status_word(1) = '1'
         report "AXI status did not report reload_block_done after the continuous active packet"
         severity failure;
-        assert status_word(2) = '0' and status_word(3) = '0' and status_word(5) = '0' and status_word(6) = '0'
-        report "AXI status reported reload/bank error bits after the continuous active packet"
+        assert status_word(2) = '0' and status_word(3) = '0' and status_word(6) = '0'
+        report "AXI status reported reload/timing/write error bits after the continuous active packet"
         severity failure;
 
         assert coeff_prefetch_done = '1'
@@ -765,6 +859,55 @@ begin
         wait_for_output_packet;
         output_backpressure_enable <= '0';
         wait_clock_cycles(5);
+
+        if status_word(5) = '1' then
+            report "Ping-pong bank underrun observed after finite coefficient input; sending a recovery bank"
+            severity note;
+
+            recovery_timeout_counter := 0;
+            loop
+                axi_read(C_STATUS_ADDR, status_word);
+                exit when status_word(0) = '0';
+                wait_clock_cycles(1);
+                recovery_timeout_counter := recovery_timeout_counter + 1;
+
+                assert recovery_timeout_counter < C_INPUT_READY_TIMEOUT_CYCLES
+                report "Reload/config update did not finish before the underrun recovery test"
+                severity failure;
+            end loop;
+
+            coeff_recovery_enable <= '1';
+
+            recovery_timeout_counter := 0;
+            loop
+                wait until rising_edge(aclk);
+                exit when coeff_recovery_done = '1';
+                recovery_timeout_counter := recovery_timeout_counter + 1;
+
+                assert recovery_timeout_counter < C_INPUT_READY_TIMEOUT_CYCLES
+                report "Timeout waiting for the recovery coefficient bank to be accepted"
+                severity failure;
+            end loop;
+
+            recovery_timeout_counter := 0;
+            loop
+                axi_read(C_STATUS_ADDR, status_word);
+                exit when status_word(5) = '0';
+                wait_clock_cycles(1);
+                recovery_timeout_counter := recovery_timeout_counter + 1;
+
+                assert recovery_timeout_counter < C_PHASE3_FU_PERIOD_CYCLES
+                report "Ping-pong bank underrun did not clear after the recovery bank became ready"
+                severity failure;
+            end loop;
+
+            assert status_word(2) = '0' and status_word(3) = '0' and status_word(6) = '0'
+            report "Underrun recovery test raised reload/timing/write error bits"
+            severity failure;
+
+            report "Ping-pong bank underrun cleared after the recovery bank was written"
+            severity note;
+        end if;
 
         -- Flush the FIR delay line so the following impulse measures only the
         -- committed coefficient set, not leftover samples from the active packet.
@@ -818,16 +961,16 @@ begin
                 if verification_packet_active = '1' then
                     case output_index is
                         when 0 =>
-                            expected_i := 9;
-                            expected_q := 1;
-
-                        when 1 =>
-                            expected_i := -4;
+                            expected_i := 7;
                             expected_q := -1;
 
+                        when 1 =>
+                            expected_i := 8;
+                            expected_q := -2;
+
                         when 2 =>
-                            expected_i := 2;
-                            expected_q := 3;
+                            expected_i := 9;
+                            expected_q := -3;
 
                         when others =>
                             expected_i := 0;
@@ -868,17 +1011,17 @@ begin
                 if verification_packet_active = '1' then
                     case output_index is
                         when 0 =>
-                            assert output_i = 9 and output_q = 1
+                            assert output_i = 7 and output_q = -1
                             report "Verification impulse mismatch at tap 0"
                             severity error;
 
                         when 1 =>
-                            assert output_i = -4 and output_q = -1
+                            assert output_i = 8 and output_q = -2
                             report "Verification impulse mismatch at tap 1"
                             severity error;
 
                         when 2 =>
-                            assert output_i = 2 and output_q = 3
+                            assert output_i = 9 and output_q = -3
                             report "Verification impulse mismatch at tap 2"
                             severity error;
 
