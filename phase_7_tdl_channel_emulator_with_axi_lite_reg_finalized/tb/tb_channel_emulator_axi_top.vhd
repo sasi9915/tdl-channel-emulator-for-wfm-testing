@@ -824,10 +824,25 @@ begin
         report "AXI-Lite W-first write corrupted the previous BANK_SETS address"
         severity failure;
 
+        -- Configure setup-time parameters while the coefficient-update engine is paused.
+        axi_write(C_CONTROL_ADDR, x"00000000");
         axi_write(C_FU_PERIOD_ADDR, std_logic_vector(to_unsigned(C_PHASE3_FU_PERIOD_CYCLES, C_AXI_DATA_WIDTH)));
         axi_write(C_BANK_SETS_ADDR, std_logic_vector(to_unsigned(C_BANK_SET_COUNT, C_AXI_DATA_WIDTH)));
-        axi_write(C_CONTROL_ADDR, x"00000001");
         coeff_prefetch_enable <= '1';
+
+        recovery_timeout_counter := 0;
+        loop
+            axi_read(C_STATUS_ADDR, status_word);
+            exit when status_word(4) = '1';
+            wait_clock_cycles(1);
+            recovery_timeout_counter := recovery_timeout_counter + 1;
+
+            assert recovery_timeout_counter < C_INPUT_READY_TIMEOUT_CYCLES
+            report "Timeout waiting for the first coefficient bank before enabling the sequencer"
+            severity failure;
+        end loop;
+
+        axi_write(C_CONTROL_ADDR, x"00000001");
         wait_clock_cycles(2);
 
         verification_packet_active <= '0';

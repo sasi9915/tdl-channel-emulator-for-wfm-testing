@@ -181,7 +181,10 @@ architecture rtl of channel_emulator_prefetch_top is
 
 begin
 
-    bank_config_process : process(cfg_bank_sets_per_bank)
+    -- SETS_PER_BANK is setup-time configuration from AXI-Lite. This combinational
+    -- guard converts the register value once into the shared range used by both
+    -- the ping-pong buffer bank boundary and the sequencer block-done boundary.
+    sets_per_bank_config_process : process(cfg_bank_sets_per_bank)
     begin
         if is_x(std_logic_vector(cfg_bank_sets_per_bank)) then
             bank_sets_per_bank <= G_BANK_SET_COUNT;
