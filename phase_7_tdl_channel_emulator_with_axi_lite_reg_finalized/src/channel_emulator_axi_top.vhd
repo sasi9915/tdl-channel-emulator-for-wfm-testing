@@ -56,6 +56,7 @@ architecture rtl of channel_emulator_axi_top is
     signal seq_clear_status       : std_logic;
     signal seq_fu_period_cycles   : std_logic_vector(31 downto 0);
     signal cfg_bank_sets_per_bank : std_logic_vector(31 downto 0);
+    signal irq_enable             : std_logic_vector(5 downto 0);
 
     signal w_reload_active                   : std_logic;
     signal w_reload_set_done                 : std_logic;
@@ -65,6 +66,10 @@ architecture rtl of channel_emulator_axi_top is
     signal w_coeff_bank_active_set_available : std_logic;
     signal w_coeff_bank_underrun             : std_logic;
     signal w_coeff_bank_write_error          : std_logic;
+    signal w_fir_reload_error                : std_logic;
+    signal w_coeff_bank_active_bank          : std_logic;
+    signal w_coeff_bank0_ready               : std_logic;
+    signal w_coeff_bank1_ready               : std_logic;
     signal w_state_debug                     : std_logic_vector(2 downto 0);
 begin
 
@@ -77,6 +82,7 @@ begin
             seq_enable                      => seq_enable,
             seq_fu_period_cycles            => seq_fu_period_cycles,
             cfg_bank_sets_per_bank          => cfg_bank_sets_per_bank,
+            irq_enable                      => irq_enable,
             seq_clear_status                => seq_clear_status,
             seq_reload_active               => w_reload_active,
             seq_reload_block_done           => w_reload_block_done,
@@ -85,6 +91,10 @@ begin
             coeff_bank_active_set_available => w_coeff_bank_active_set_available,
             coeff_bank_underrun             => w_coeff_bank_underrun,
             coeff_bank_write_error          => w_coeff_bank_write_error,
+            fir_reload_error                => w_fir_reload_error,
+            coeff_bank_active_bank          => w_coeff_bank_active_bank,
+            coeff_bank0_ready               => w_coeff_bank0_ready,
+            coeff_bank1_ready               => w_coeff_bank1_ready,
             seq_state_debug                 => w_state_debug,
             s00_axi_aclk                    => aclk,
             s00_axi_aresetn                 => aresetn,
@@ -145,9 +155,18 @@ begin
             coeff_bank_active_set_available => w_coeff_bank_active_set_available,
             coeff_bank_underrun             => w_coeff_bank_underrun,
             coeff_bank_write_error          => w_coeff_bank_write_error,
+            fir_reload_error                => w_fir_reload_error,
+            coeff_bank_active_bank          => w_coeff_bank_active_bank,
+            coeff_bank0_ready               => w_coeff_bank0_ready,
+            coeff_bank1_ready               => w_coeff_bank1_ready,
             state_debug                     => w_state_debug
         );
 
-    irq <= w_reload_block_done or w_missed_refill or w_reload_timing_error or w_coeff_bank_underrun or w_coeff_bank_write_error;
+    irq <= (w_reload_block_done and irq_enable(0)) or
+           (w_missed_refill and irq_enable(1)) or
+           (w_reload_timing_error and irq_enable(2)) or
+           (w_coeff_bank_underrun and irq_enable(3)) or
+           (w_coeff_bank_write_error and irq_enable(4)) or
+           (w_fir_reload_error and irq_enable(5));
 
 end architecture;

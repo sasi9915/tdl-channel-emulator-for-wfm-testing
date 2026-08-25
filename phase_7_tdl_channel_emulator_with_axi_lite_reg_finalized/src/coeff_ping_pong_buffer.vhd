@@ -26,7 +26,10 @@ entity coeff_ping_pong_buffer is
         consume_set_ready    : out std_logic;
         active_set_available : out std_logic;
         underrun             : out std_logic;
-        write_error          : out std_logic
+        write_error          : out std_logic;
+        debug_active_bank    : out std_logic;
+        debug_bank0_ready    : out std_logic;
+        debug_bank1_ready    : out std_logic
     );
 end entity;
 
@@ -269,6 +272,9 @@ begin
     consume_set_ready    <= r_active_set_available and not clear_errors;
     underrun             <= r_underrun;
     write_error          <= r_write_error;
+    debug_active_bank    <= r_active_bank;
+    debug_bank0_ready    <= r_bank0_ready;
+    debug_bank1_ready    <= r_bank1_ready;
 
     --- component port mappiing
     

@@ -18,6 +18,7 @@ entity pl_sequencer_axi_lite is
 		seq_enable              : out std_logic;
 		seq_fu_period_cycles    : out std_logic_vector(31 downto 0);
 		cfg_bank_sets_per_bank  : out std_logic_vector(31 downto 0);
+		irq_enable              : out std_logic_vector(5 downto 0);
 		seq_clear_status        : out std_logic;
 		seq_reload_active       : in  std_logic;
 		seq_reload_block_done   : in  std_logic;
@@ -26,6 +27,10 @@ entity pl_sequencer_axi_lite is
 		coeff_bank_active_set_available : in std_logic;
 		coeff_bank_underrun             : in std_logic;
 		coeff_bank_write_error          : in std_logic;
+		fir_reload_error        : in  std_logic;
+		coeff_bank_active_bank  : in  std_logic;
+		coeff_bank0_ready       : in  std_logic;
+		coeff_bank1_ready       : in  std_logic;
 		seq_state_debug         : in  std_logic_vector(2 downto 0);
 		-- User ports ends
 		-- Do not modify the ports beyond this line
@@ -67,6 +72,7 @@ architecture arch_imp of pl_sequencer_axi_lite is
 			seq_enable              : out std_logic;
 			seq_fu_period_cycles    : out std_logic_vector(31 downto 0);
 			cfg_bank_sets_per_bank  : out std_logic_vector(31 downto 0);
+			irq_enable              : out std_logic_vector(5 downto 0);
 			seq_clear_status        : out std_logic;
 			seq_reload_active       : in  std_logic;
 			seq_reload_block_done   : in  std_logic;
@@ -75,6 +81,10 @@ architecture arch_imp of pl_sequencer_axi_lite is
 			coeff_bank_active_set_available : in std_logic;
 			coeff_bank_underrun             : in std_logic;
 			coeff_bank_write_error          : in std_logic;
+			fir_reload_error        : in  std_logic;
+			coeff_bank_active_bank  : in  std_logic;
+			coeff_bank0_ready       : in  std_logic;
+			coeff_bank1_ready       : in  std_logic;
 			seq_state_debug         : in  std_logic_vector(2 downto 0);
 			S_AXI_ACLK              : in  std_logic;
 			S_AXI_ARESETN           : in  std_logic;
@@ -112,6 +122,7 @@ begin
 			seq_enable              => seq_enable,
 			seq_fu_period_cycles    => seq_fu_period_cycles,
 			cfg_bank_sets_per_bank  => cfg_bank_sets_per_bank,
+			irq_enable              => irq_enable,
 			seq_clear_status        => seq_clear_status,
 			seq_reload_active       => seq_reload_active,
 			seq_reload_block_done   => seq_reload_block_done,
@@ -120,6 +131,10 @@ begin
 			coeff_bank_active_set_available => coeff_bank_active_set_available,
 			coeff_bank_underrun             => coeff_bank_underrun,
 			coeff_bank_write_error          => coeff_bank_write_error,
+			fir_reload_error        => fir_reload_error,
+			coeff_bank_active_bank  => coeff_bank_active_bank,
+			coeff_bank0_ready       => coeff_bank0_ready,
+			coeff_bank1_ready       => coeff_bank1_ready,
 			seq_state_debug         => seq_state_debug,
 			S_AXI_ACLK              => s00_axi_aclk,
 			S_AXI_ARESETN           => s00_axi_aresetn,

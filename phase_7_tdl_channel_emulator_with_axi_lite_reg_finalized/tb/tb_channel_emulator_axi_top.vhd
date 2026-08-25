@@ -33,7 +33,9 @@ architecture rtl of tb_channel_emulator_axi_top is
     constant C_CONTROL_ADDR               : std_logic_vector(C_AXI_ADDR_WIDTH - 1 downto 0) := "00000";
     constant C_FU_PERIOD_ADDR             : std_logic_vector(C_AXI_ADDR_WIDTH - 1 downto 0) := "00100";
     constant C_BANK_SETS_ADDR             : std_logic_vector(C_AXI_ADDR_WIDTH - 1 downto 0) := "01000";
+    constant C_IRQ_ENABLE_ADDR            : std_logic_vector(C_AXI_ADDR_WIDTH - 1 downto 0) := "01100";
     constant C_STATUS_ADDR                : std_logic_vector(C_AXI_ADDR_WIDTH - 1 downto 0) := "10000";
+    constant C_DEBUG_ADDR                 : std_logic_vector(C_AXI_ADDR_WIDTH - 1 downto 0) := "10100";
 
     type t_coefficient_array  is array (0 to C_TAP_COUNT - 1) of integer;
     type t_reload_order_array is array (0 to C_RELOAD_WORD_COUNT - 1) of integer range 0 to C_RELOAD_WORD_COUNT - 1;
@@ -250,6 +252,9 @@ architecture rtl of tb_channel_emulator_axi_top is
     signal m_axis_tdata  : std_logic_vector(79 downto 0);
     signal m_axis_tlast  : std_logic;
     signal irq           : std_logic;
+    signal block_done_irq_monitor_enable : std_logic := '0';
+    signal block_done_irq_pulse_count    : integer   := 0;
+    signal block_done_irq_previous       : std_logic := '0';
 
     signal s00_axi_awaddr  : std_logic_vector(C_AXI_ADDR_WIDTH - 1 downto 0)       := (others => '0');
     signal s00_axi_awprot  : std_logic_vector(2 downto 0)                          := (others => '0');
@@ -364,6 +369,28 @@ begin
                 m_axis_tready           <= '1';
                 dbg_output_backpressure <= '0';
                 lfsr                    := C_BACKPRESSURE_SEED;
+            end if;
+        end if;
+    end process;
+
+    block_done_irq_monitor : process(aclk)
+    begin
+        if rising_edge(aclk) then
+            if aresetn = '0' then
+                block_done_irq_pulse_count <= 0;
+                block_done_irq_previous    <= '0';
+            elsif block_done_irq_monitor_enable = '1' then
+                if irq = '1' then
+                    block_done_irq_pulse_count <= block_done_irq_pulse_count + 1;
+
+                    assert block_done_irq_previous = '0'
+                    report "block_done IRQ stayed high for more than one clock"
+                    severity failure;
+                end if;
+
+                block_done_irq_previous <= irq;
+            else
+                block_done_irq_previous <= '0';
             end if;
         end if;
     end process;
@@ -630,7 +657,7 @@ begin
                     assert pause_status_word(0) = '0'
                     report "Sequencer became active while enable was paused before the first Fu tick"
                     severity failure;
-                    assert pause_status_word(2) = '0' and pause_status_word(3) = '0' and pause_status_word(6) = '0'
+                    assert pause_status_word(2) = '0' and pause_status_word(3) = '0' and pause_status_word(6) = '0' and pause_status_word(7) = '0'
                     report "Pause-before-Fu test raised reload/timing/write error bits"
                     severity failure;
 
@@ -671,7 +698,7 @@ begin
 
                     wait_clock_cycles(256);
                     axi_read(C_STATUS_ADDR, pause_status_word);
-                    assert pause_status_word(2) = '0' and pause_status_word(3) = '0' and pause_status_word(6) = '0'
+                    assert pause_status_word(2) = '0' and pause_status_word(3) = '0' and pause_status_word(6) = '0' and pause_status_word(7) = '0'
                     report "Pause-during-update test raised reload/timing/write error bits"
                     severity failure;
 
@@ -793,6 +820,7 @@ begin
         s00_axi_arvalid            <= '0';
         s00_axi_rready             <= '0';
         coeff_prefetch_enable      <= '0';
+        block_done_irq_monitor_enable <= '0';
         verification_packet_active <= '0';
         current_packet_length      <= C_ACTIVE_PACKET_LENGTH;
         output_backpressure_enable <= '0';
@@ -824,8 +852,15 @@ begin
         report "AXI-Lite W-first write corrupted the previous BANK_SETS address"
         severity failure;
 
+        axi_write(C_IRQ_ENABLE_ADDR, x"0000003F");
+        axi_read(C_IRQ_ENABLE_ADDR, readback_word);
+        assert readback_word = x"0000003F"
+        report "AXI-Lite write/readback failed for IRQ_ENABLE"
+        severity failure;
+
         -- Configure setup-time parameters while the coefficient-update engine is paused.
         axi_write(C_CONTROL_ADDR, x"00000000");
+        axi_write(C_IRQ_ENABLE_ADDR, x"00000000");
         axi_write(C_FU_PERIOD_ADDR, std_logic_vector(to_unsigned(C_PHASE3_FU_PERIOD_CYCLES, C_AXI_DATA_WIDTH)));
         axi_write(C_BANK_SETS_ADDR, std_logic_vector(to_unsigned(C_BANK_SET_COUNT, C_AXI_DATA_WIDTH)));
         coeff_prefetch_enable <= '1';
@@ -842,6 +877,16 @@ begin
             severity failure;
         end loop;
 
+        axi_read(C_DEBUG_ADDR, readback_word);
+        assert readback_word(4) = '1'
+        report "DEBUG did not report bank0_ready after the first coefficient bank was filled"
+        severity failure;
+        assert readback_word(3) = '0'
+        report "DEBUG active_bank did not report bank 0 after the first coefficient bank was filled"
+        severity failure;
+
+        axi_write(C_IRQ_ENABLE_ADDR, x"00000001");
+        block_done_irq_monitor_enable <= '1';
         axi_write(C_CONTROL_ADDR, x"00000001");
         wait_clock_cycles(2);
 
@@ -849,6 +894,9 @@ begin
         current_packet_length      <= C_ACTIVE_PACKET_LENGTH;
         output_backpressure_enable <= '1';
         send_active_packet_with_sequencer;
+        block_done_irq_monitor_enable <= '0';
+        axi_write(C_IRQ_ENABLE_ADDR, x"00000000");
+        wait_clock_cycles(1);
 
         axi_read(C_STATUS_ADDR, status_word);
         report "AXI status after active packet: active=" & std_logic'image(status_word(0)) &
@@ -857,13 +905,17 @@ begin
                ", reload_timing_error=" & std_logic'image(status_word(3)) &
                ", active_set_available=" & std_logic'image(status_word(4)) &
                ", bank_underrun=" & std_logic'image(status_word(5)) &
-               ", bank_write_error=" & std_logic'image(status_word(6))
+               ", bank_write_error=" & std_logic'image(status_word(6)) &
+               ", fir_reload_error=" & std_logic'image(status_word(7))
         severity note;
-        assert status_word(1) = '1'
-        report "AXI status did not report reload_block_done after the continuous active packet"
+        assert block_done_irq_pulse_count = C_CONTINUOUS_RELOAD_SET_COUNT / C_BANK_SET_COUNT
+        report "block_done did not generate the expected number of one-clock IRQ pulses"
         severity failure;
-        assert status_word(2) = '0' and status_word(3) = '0' and status_word(6) = '0'
+        assert status_word(2) = '0' and status_word(3) = '0' and status_word(6) = '0' and status_word(7) = '0'
         report "AXI status reported reload/timing/write error bits after the continuous active packet"
+        severity failure;
+        assert irq = '0'
+        report "IRQ asserted even though IRQ_ENABLE masked all sources"
         severity failure;
 
         assert coeff_prefetch_done = '1'
@@ -878,6 +930,12 @@ begin
         if status_word(5) = '1' then
             report "Ping-pong bank underrun observed after finite coefficient input; sending a recovery bank"
             severity note;
+
+            axi_write(C_IRQ_ENABLE_ADDR, x"0000003E");
+            wait_clock_cycles(1);
+            assert irq = '1'
+            report "IRQ did not assert when bank_underrun was enabled in IRQ_ENABLE"
+            severity failure;
 
             recovery_timeout_counter := 0;
             loop
@@ -916,7 +974,12 @@ begin
                 severity failure;
             end loop;
 
-            assert status_word(2) = '0' and status_word(3) = '0' and status_word(6) = '0'
+            wait_clock_cycles(1);
+            assert irq = '0'
+            report "IRQ stayed asserted after the enabled bank_underrun source cleared"
+            severity failure;
+
+            assert status_word(2) = '0' and status_word(3) = '0' and status_word(6) = '0' and status_word(7) = '0'
             report "Underrun recovery test raised reload/timing/write error bits"
             severity failure;
 

@@ -4,11 +4,11 @@ use ieee.numeric_std.all;
 
 entity coeff_reload_sequencer is
     generic(
-        G_RELOAD_WORD_COUNT : integer := 133;
+        G_RELOAD_WORD_COUNT : integer  := 133;
         G_MAX_SET_COUNT     : positive := 600;
-        G_COEFF_WIDTH       : integer := 16;
-        G_CONFIG_WIDTH      : integer := 8;
-        G_FIFO_DEPTH        : integer := 512
+        G_COEFF_WIDTH       : integer  := 16;
+        G_CONFIG_WIDTH      : integer  := 8;
+        G_FIFO_DEPTH        : integer  := 512
     );
     port(
         aclk                : in  std_logic;
@@ -163,10 +163,10 @@ begin
             r_missed_refill       <= '0';
             r_reload_timing_error <= '0';
         elsif rising_edge(aclk) then
-            r_reload_set_done <= '0';
+            r_reload_set_done   <= '0';
+            r_reload_block_done <= '0';
 
             if clear_status = '1' then
-                r_reload_block_done   <= '0';
                 r_missed_refill       <= '0';
                 r_reload_timing_error <= '0';
             end if;
@@ -289,24 +289,20 @@ begin
         end if;
     end process;
 
-    w_fu_tick               <= '1' when enable = '1' and fu_period_cycles /= to_unsigned(0, fu_period_cycles'length) and r_fu_counter = fu_period_cycles - 1 else '0';
-    w_fifo_resetn           <= aresetn;
-    w_fifo_usedw_unsigned   <= unsigned(w_xpm_sync_fifo_i_buffer_fifo_usedw);
-    w_fifo_has_complete_set <= '1' when aresetn = '1' and w_fifo_usedw_unsigned >= to_unsigned(G_RELOAD_WORD_COUNT, w_fifo_usedw_unsigned'length) else '0';
+    w_fu_tick                      <= '1' when enable = '1' and fu_period_cycles /= to_unsigned(0, fu_period_cycles'length) and r_fu_counter = fu_period_cycles - 1 else '0';
+    w_fifo_resetn                  <= aresetn;
+    w_fifo_usedw_unsigned          <= unsigned(w_xpm_sync_fifo_i_buffer_fifo_usedw);
+    w_fifo_has_complete_set        <= '1' when aresetn = '1' and w_fifo_usedw_unsigned >= to_unsigned(G_RELOAD_WORD_COUNT, w_fifo_usedw_unsigned'length) else '0';
     w_set_input_ready              <= '1' when enable = '1' and state /= s_fault_hold and w_fifo_full = '0' else '0';
     w_xpm_sync_i_buffer_fifo_wrreq <= coeff_set_tvalid and w_set_input_ready;
     w_reload_last                  <= '1' when state = s_reload and r_reload_word_index = G_RELOAD_WORD_COUNT - 1 else '0';
     w_real_reload_accepted         <= r_real_reload_valid and real_reload_tready;
     w_imag_reload_accepted         <= r_imag_reload_valid and imag_reload_tready;
-    w_reload_accepted              <= (r_real_reload_valid or r_imag_reload_valid) and
-                                      ((not r_real_reload_valid) or real_reload_tready) and
-                                      ((not r_imag_reload_valid) or imag_reload_tready);
+    w_reload_accepted              <= (r_real_reload_valid or r_imag_reload_valid) and ((not r_real_reload_valid) or real_reload_tready) and ((not r_imag_reload_valid) or imag_reload_tready);
     w_xpm_sync_fifo_i_fifo_rdreq   <= '1' when state = s_reload and r_real_reload_valid = '0' and r_imag_reload_valid = '0' and w_fifo_empty = '0' else '0';
     w_real_config_accepted         <= r_real_config_valid and real_config_tready;
     w_imag_config_accepted         <= r_imag_config_valid and imag_config_tready;
-    w_config_accepted              <= (r_real_config_valid or r_imag_config_valid) and
-                                      ((not r_real_config_valid) or real_config_tready) and
-                                      ((not r_imag_config_valid) or imag_config_tready);
+    w_config_accepted              <= (r_real_config_valid or r_imag_config_valid) and ((not r_real_config_valid) or real_config_tready) and ((not r_imag_config_valid) or imag_config_tready);
 
     -- synthesis translate_off
     process(aclk)

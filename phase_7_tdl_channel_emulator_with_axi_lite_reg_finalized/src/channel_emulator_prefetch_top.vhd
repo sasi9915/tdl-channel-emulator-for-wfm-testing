@@ -38,6 +38,10 @@ entity channel_emulator_prefetch_top is
         coeff_bank_active_set_available : out std_logic;
         coeff_bank_underrun             : out std_logic;
         coeff_bank_write_error          : out std_logic;
+        fir_reload_error                : out std_logic;
+        coeff_bank_active_bank          : out std_logic;
+        coeff_bank0_ready               : out std_logic;
+        coeff_bank1_ready               : out std_logic;
         state_debug                     : out std_logic_vector(2 downto 0)
     );
 end entity;
@@ -68,7 +72,10 @@ architecture rtl of channel_emulator_prefetch_top is
             consume_set_ready    : out std_logic;
             active_set_available : out std_logic;
             underrun             : out std_logic;
-            write_error          : out std_logic
+            write_error          : out std_logic;
+            debug_active_bank    : out std_logic;
+            debug_bank0_ready    : out std_logic;
+            debug_bank1_ready    : out std_logic
         );
     end component;
 
@@ -138,7 +145,8 @@ architecture rtl of channel_emulator_prefetch_top is
             m_axis_tvalid             : out std_logic;
             m_axis_tready             : in  std_logic;
             m_axis_tdata              : out std_logic_vector(79 downto 0);
-            m_axis_tlast              : out std_logic
+            m_axis_tlast              : out std_logic;
+            fir_reload_error          : out std_logic
         );
     end component;
 
@@ -172,6 +180,11 @@ architecture rtl of channel_emulator_prefetch_top is
     signal bank_active_set_available : std_logic;
     signal bank_underrun             : std_logic;
     signal bank_write_error          : std_logic;
+    signal channel_fir_reload_error  : std_logic;
+    signal r_fir_reload_error        : std_logic := '0';
+    signal bank_active_bank          : std_logic;
+    signal bank0_ready               : std_logic;
+    signal bank1_ready               : std_logic;
 
     signal reader_state           : t_bank_reader_state                                := s_bank_idle;
     signal reader_word_index      : integer range 0 to G_RELOAD_WORD_COUNT - 1         := 0;
@@ -221,7 +234,10 @@ begin
             consume_set_ready    => bank_consume_set_ready,
             active_set_available => bank_active_set_available,
             underrun             => bank_underrun,
-            write_error          => bank_write_error
+            write_error          => bank_write_error,
+            debug_active_bank    => bank_active_bank,
+            debug_bank0_ready    => bank0_ready,
+            debug_bank1_ready    => bank1_ready
         );
 
     bank_reader_process : process(aclk, aresetn)
@@ -280,6 +296,19 @@ begin
                         reader_state           <= s_bank_idle;
                     end if;
             end case;
+        end if;
+    end process;
+
+    fir_reload_error_status_process : process(aclk, aresetn)
+    begin
+        if aresetn = '0' then
+            r_fir_reload_error <= '0';
+        elsif rising_edge(aclk) then
+            if clear_status = '1' then
+                r_fir_reload_error <= '0';
+            elsif channel_fir_reload_error = '1' then
+                r_fir_reload_error <= '1';
+            end if;
         end if;
     end process;
 
@@ -348,11 +377,16 @@ begin
             m_axis_tvalid             => m_axis_tvalid,
             m_axis_tready             => m_axis_tready,
             m_axis_tdata              => m_axis_tdata,
-            m_axis_tlast              => m_axis_tlast
+            m_axis_tlast              => m_axis_tlast,
+            fir_reload_error          => channel_fir_reload_error
         );
 
     coeff_bank_active_set_available <= bank_active_set_available;
     coeff_bank_underrun             <= bank_underrun;
     coeff_bank_write_error          <= bank_write_error;
+    fir_reload_error                <= r_fir_reload_error;
+    coeff_bank_active_bank          <= bank_active_bank;
+    coeff_bank0_ready               <= bank0_ready;
+    coeff_bank1_ready               <= bank1_ready;
 
 end architecture;
