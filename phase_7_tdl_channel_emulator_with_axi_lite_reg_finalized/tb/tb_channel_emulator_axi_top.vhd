@@ -22,6 +22,7 @@ architecture rtl of tb_channel_emulator_axi_top is
     constant C_PHASE3_FU_PERIOD_CYCLES    : integer                                         := (C_AXIS_CLK_HZ + C_FU_HZ / 2) / C_FU_HZ;
     constant C_FIR_SAMPLE_PERIOD_CYCLES   : integer                                         := 7;
     constant C_FU_PERIOD_OUTPUT_SAMPLES   : integer                                         := (C_PHASE3_FU_PERIOD_CYCLES + C_FIR_SAMPLE_PERIOD_CYCLES - 1) / C_FIR_SAMPLE_PERIOD_CYCLES;
+    constant C_FORCED_TIMING_FU_PERIOD_CYCLES : integer                                     := C_RELOAD_WORD_COUNT * 8 + 64;
     constant C_ACTIVE_PACKET_LENGTH : integer := C_CONTINUOUS_RELOAD_SET_COUNT * C_FU_PERIOD_OUTPUT_SAMPLES + C_TAP_COUNT + 512;
     constant C_VERIFY_PACKET_LENGTH       : integer                                         := 25;
     constant C_INPUT_READY_TIMEOUT_CYCLES : integer                                         := 1024;
@@ -280,6 +281,14 @@ architecture rtl of tb_channel_emulator_axi_top is
     signal coeff_set_tready                : std_logic;
     signal coeff_set_tdata                 : std_logic_vector(31 downto 0) := (others => '0');
     signal coeff_set_tlast                 : std_logic                     := '0';
+    signal coeff_malformed_enable          : std_logic                     := '0';
+    signal coeff_malformed_done            : std_logic                     := '0';
+    signal coeff_missing_tlast_enable      : std_logic                     := '0';
+    signal coeff_missing_tlast_done        : std_logic                     := '0';
+    signal coeff_single_bank_enable        : std_logic                     := '0';
+    signal coeff_single_bank_done          : std_logic                     := '0';
+    signal coeff_timing_bank_enable        : std_logic                     := '0';
+    signal coeff_timing_bank_done          : std_logic                     := '0';
     signal coeff_prefetch_enable           : std_logic                     := '0';
     signal coeff_prefetch_done             : std_logic                     := '0';
     signal coeff_recovery_enable           : std_logic                     := '0';
@@ -396,65 +405,81 @@ begin
     end process;
 
     coefficient_prefetch_driver : process
+        procedure send_coefficient_sets(
+            constant first_set_index  : integer;
+            constant set_count        : integer;
+            constant malformed_tlast  : boolean;
+            constant missing_final_tlast : boolean
+        ) is
+            variable natural_bank_last : boolean;
+        begin
+            for set_index in first_set_index to first_set_index + set_count - 1 loop
+                for word_index in 0 to C_RELOAD_WORD_COUNT - 1 loop
+                    coeff_set_tdata <= pack_reload_word(set_index, word_index);
+                    natural_bank_last := (set_index mod C_BANK_SET_COUNT) = C_BANK_SET_COUNT - 1 and word_index = C_RELOAD_WORD_COUNT - 1;
+
+                    if malformed_tlast and set_index = first_set_index and word_index = C_RELOAD_WORD_COUNT - 1 then
+                        coeff_set_tlast <= '1';
+                    elsif natural_bank_last and not missing_final_tlast then
+                        coeff_set_tlast <= '1';
+                    else
+                        coeff_set_tlast <= '0';
+                    end if;
+
+                    coeff_set_tvalid <= '1';
+
+                    loop
+                        wait until rising_edge(aclk);
+                        exit when coeff_set_tready = '1';
+                    end loop;
+                end loop;
+            end loop;
+
+            coeff_set_tvalid <= '0';
+            coeff_set_tdata  <= (others => '0');
+            coeff_set_tlast  <= '0';
+        end procedure;
     begin
         coeff_set_tvalid    <= '0';
         coeff_set_tdata     <= (others => '0');
         coeff_set_tlast     <= '0';
+        coeff_malformed_done <= '0';
+        coeff_missing_tlast_done <= '0';
+        coeff_single_bank_done <= '0';
+        coeff_timing_bank_done <= '0';
         coeff_prefetch_done <= '0';
         coeff_recovery_done <= '0';
 
         wait until aresetn = '1';
+
+        wait until coeff_malformed_enable = '1';
+        wait until rising_edge(aclk);
+        send_coefficient_sets(0, 1, true, false);
+        coeff_malformed_done <= '1';
+
+        wait until coeff_missing_tlast_enable = '1';
+        wait until rising_edge(aclk);
+        send_coefficient_sets(0, C_BANK_SET_COUNT, false, true);
+        coeff_missing_tlast_done <= '1';
+
+        wait until coeff_single_bank_enable = '1';
+        wait until rising_edge(aclk);
+        send_coefficient_sets(0, C_BANK_SET_COUNT, false, false);
+        coeff_single_bank_done <= '1';
+
+        wait until coeff_timing_bank_enable = '1';
+        wait until rising_edge(aclk);
+        send_coefficient_sets(0, 2 * C_BANK_SET_COUNT, false, false);
+        coeff_timing_bank_done <= '1';
+
         wait until coeff_prefetch_enable = '1';
         wait until rising_edge(aclk);
-
-        for set_index in 0 to C_PREFETCH_SET_COUNT - 1 loop
-            for word_index in 0 to C_RELOAD_WORD_COUNT - 1 loop
-                coeff_set_tdata  <= pack_reload_word(set_index, word_index);
-                -- TLAST marks a complete ping-pong bank, not every sequencer reload set.
-                if (set_index mod C_BANK_SET_COUNT) = C_BANK_SET_COUNT - 1 and word_index = C_RELOAD_WORD_COUNT - 1 then
-                    coeff_set_tlast <= '1';
-                else
-                    coeff_set_tlast <= '0';
-                end if;
-                coeff_set_tvalid <= '1';
-
-                loop
-                    wait until rising_edge(aclk);
-                    exit when coeff_set_tready = '1';
-                end loop;
-            end loop;
-        end loop;
-
-        coeff_set_tvalid    <= '0';
-        coeff_set_tdata     <= (others => '0');
-        coeff_set_tlast     <= '0';
+        send_coefficient_sets(0, C_PREFETCH_SET_COUNT, false, false);
         coeff_prefetch_done <= '1';
 
         wait until coeff_recovery_enable = '1';
         wait until rising_edge(aclk);
-
-        for set_index in C_PREFETCH_SET_COUNT to C_PREFETCH_SET_COUNT + C_BANK_SET_COUNT - 1 loop
-            for word_index in 0 to C_RELOAD_WORD_COUNT - 1 loop
-                coeff_set_tdata  <= pack_reload_word(set_index, word_index);
-
-                if (set_index mod C_BANK_SET_COUNT) = C_BANK_SET_COUNT - 1 and word_index = C_RELOAD_WORD_COUNT - 1 then
-                    coeff_set_tlast <= '1';
-                else
-                    coeff_set_tlast <= '0';
-                end if;
-
-                coeff_set_tvalid <= '1';
-
-                loop
-                    wait until rising_edge(aclk);
-                    exit when coeff_set_tready = '1';
-                end loop;
-            end loop;
-        end loop;
-
-        coeff_set_tvalid    <= '0';
-        coeff_set_tdata     <= (others => '0');
-        coeff_set_tlast     <= '0';
+        send_coefficient_sets(C_PREFETCH_SET_COUNT, C_BANK_SET_COUNT, false, false);
         coeff_recovery_done <= '1';
 
         wait;
@@ -801,33 +826,231 @@ begin
             end loop;
         end procedure;
 
+        procedure reset_dut is
+        begin
+            aresetn                       <= '0';
+            s_axis_tvalid                 <= '0';
+            s_axis_tlast                  <= '0';
+            s_axis_tdata                  <= (others => '0');
+            s00_axi_awaddr                <= (others => '0');
+            s00_axi_awvalid               <= '0';
+            s00_axi_wdata                 <= (others => '0');
+            s00_axi_wstrb                 <= (others => '0');
+            s00_axi_wvalid                <= '0';
+            s00_axi_bready                <= '0';
+            s00_axi_araddr                <= (others => '0');
+            s00_axi_arvalid               <= '0';
+            s00_axi_rready                <= '0';
+            coeff_malformed_enable        <= '0';
+            coeff_missing_tlast_enable    <= '0';
+            coeff_single_bank_enable      <= '0';
+            coeff_timing_bank_enable      <= '0';
+            coeff_prefetch_enable         <= '0';
+            coeff_recovery_enable         <= '0';
+            block_done_irq_monitor_enable <= '0';
+            verification_packet_active    <= '0';
+            current_packet_length         <= C_ACTIVE_PACKET_LENGTH;
+            output_backpressure_enable    <= '0';
+
+            wait_clock_cycles(10);
+            aresetn <= '1';
+            wait for 2000 ns;
+        end procedure;
+
+        procedure wait_for_signal_high(
+            signal flag            : in std_logic;
+            constant timeout_cycles : in integer;
+            constant timeout_report : in string
+        ) is
+            variable timeout_counter : integer := 0;
+        begin
+            loop
+                wait until rising_edge(aclk);
+                exit when flag = '1';
+
+                timeout_counter := timeout_counter + 1;
+                assert timeout_counter < timeout_cycles
+                report timeout_report
+                severity failure;
+            end loop;
+        end procedure;
+
+        procedure wait_for_status_bit(
+            constant bit_index      : in integer;
+            constant expected_value : in std_logic;
+            constant timeout_cycles : in integer;
+            constant timeout_report : in string;
+            variable status_value   : inout std_logic_vector(C_AXI_DATA_WIDTH - 1 downto 0)
+        ) is
+            variable timeout_counter : integer := 0;
+        begin
+            loop
+                axi_read(C_STATUS_ADDR, status_value);
+                exit when status_value(bit_index) = expected_value;
+
+                wait_clock_cycles(1);
+                timeout_counter := timeout_counter + 1;
+                assert timeout_counter < timeout_cycles
+                report timeout_report
+                severity failure;
+            end loop;
+        end procedure;
+
         variable status_word : std_logic_vector(C_AXI_DATA_WIDTH - 1 downto 0);
         variable readback_word : std_logic_vector(C_AXI_DATA_WIDTH - 1 downto 0);
         variable recovery_timeout_counter : integer := 0;
 
     begin
-        aresetn                    <= '0';
-        s_axis_tvalid              <= '0';
-        s_axis_tlast               <= '0';
-        s_axis_tdata               <= (others => '0');
-        s00_axi_awaddr             <= (others => '0');
-        s00_axi_awvalid            <= '0';
-        s00_axi_wdata              <= (others => '0');
-        s00_axi_wstrb              <= (others => '0');
-        s00_axi_wvalid             <= '0';
-        s00_axi_bready             <= '0';
-        s00_axi_araddr             <= (others => '0');
-        s00_axi_arvalid            <= '0';
-        s00_axi_rready             <= '0';
-        coeff_prefetch_enable      <= '0';
-        block_done_irq_monitor_enable <= '0';
-        verification_packet_active <= '0';
-        current_packet_length      <= C_ACTIVE_PACKET_LENGTH;
-        output_backpressure_enable <= '0';
+        report "Phase-7 simulator-only full-system verification starting"
+        severity note;
 
-        wait_clock_cycles(10);
-        aresetn               <= '1';
-        wait for 2000 ns;
+        reset_dut;
+
+        report "TEST 1: early coefficient-bank TLAST sets STATUS while its IRQ mask is disabled"
+        severity note;
+
+        axi_write(C_CONTROL_ADDR, x"00000000");
+        axi_write(C_IRQ_ENABLE_ADDR, x"00000000");
+        axi_write(C_BANK_SETS_ADDR, std_logic_vector(to_unsigned(C_BANK_SET_COUNT, C_AXI_DATA_WIDTH)));
+        coeff_malformed_enable <= '1';
+        wait_for_signal_high(coeff_malformed_done, C_INPUT_READY_TIMEOUT_CYCLES, "Timeout waiting for malformed coefficient stream");
+        coeff_malformed_enable <= '0';
+        axi_read(C_STATUS_ADDR, status_word);
+        assert status_word(6) = '1'
+        report "Early coefficient-bank TLAST did not set bank_write_error"
+        severity failure;
+        assert irq = '0'
+        report "Masked bank_write_error drove IRQ while IRQ_ENABLE[4] was 0"
+        severity failure;
+        axi_write(C_IRQ_ENABLE_ADDR, x"00000010");
+        wait_clock_cycles(1);
+        assert irq = '1'
+        report "bank_write_error did not drive IRQ when IRQ_ENABLE[4] was set"
+        severity failure;
+        axi_write(C_CONTROL_ADDR, x"00000002");
+        wait_clock_cycles(4);
+        axi_read(C_STATUS_ADDR, status_word);
+        assert status_word(6) = '0' and irq = '0'
+        report "CLEAR_STATUS did not clear bank_write_error IRQ/status"
+        severity failure;
+        report "TEST 1 passed: early TLAST status, IRQ mask, IRQ enable, and clear behavior verified"
+        severity note;
+
+        reset_dut;
+
+        report "TEST 2: missing final coefficient-bank TLAST sets bank_write_error and does not publish a ready bank"
+        severity note;
+
+        axi_write(C_CONTROL_ADDR, x"00000000");
+        axi_write(C_IRQ_ENABLE_ADDR, x"00000010");
+        axi_write(C_BANK_SETS_ADDR, std_logic_vector(to_unsigned(C_BANK_SET_COUNT, C_AXI_DATA_WIDTH)));
+        coeff_missing_tlast_enable <= '1';
+        wait_for_signal_high(coeff_missing_tlast_done, C_INPUT_READY_TIMEOUT_CYCLES, "Timeout waiting for missing-TLAST coefficient stream");
+        coeff_missing_tlast_enable <= '0';
+        axi_read(C_STATUS_ADDR, status_word);
+        axi_read(C_DEBUG_ADDR, readback_word);
+        assert status_word(6) = '1'
+        report "Missing final coefficient-bank TLAST did not set bank_write_error"
+        severity failure;
+        assert status_word(4) = '0'
+        report "Malformed missing-TLAST bank was exposed as active_set_available"
+        severity failure;
+        assert readback_word(4) = '0' and readback_word(5) = '0'
+        report "Malformed missing-TLAST bank incorrectly marked a debug bank ready"
+        severity failure;
+        assert irq = '1'
+        report "Missing-TLAST bank_write_error did not drive IRQ when IRQ_ENABLE[4] was set"
+        severity failure;
+        report "TEST 2 passed: missing final TLAST reported and rejected"
+        severity note;
+
+        reset_dut;
+
+        report "TEST 3: explicit missed_refill status and IRQ assert when Fu ticks arrive with no staged coefficients"
+        severity note;
+
+        axi_write(C_CONTROL_ADDR, x"00000000");
+        axi_write(C_IRQ_ENABLE_ADDR, x"00000002");
+        axi_write(C_FU_PERIOD_ADDR, std_logic_vector(to_unsigned(8, C_AXI_DATA_WIDTH)));
+        axi_write(C_BANK_SETS_ADDR, std_logic_vector(to_unsigned(C_BANK_SET_COUNT, C_AXI_DATA_WIDTH)));
+        axi_write(C_CONTROL_ADDR, x"00000001");
+        wait_for_status_bit(2, '1', 64, "Timeout waiting for deliberate missed_refill", status_word);
+        assert irq = '1'
+        report "missed_refill did not drive IRQ when IRQ_ENABLE[1] was set"
+        severity failure;
+        assert status_word(3) = '0' and status_word(5) = '0' and status_word(6) = '0' and status_word(7) = '0'
+        report "Deliberate missed_refill test raised an unexpected timing/bank/write/FIR error"
+        severity failure;
+        axi_write(C_CONTROL_ADDR, x"00000002");
+        wait_clock_cycles(4);
+        axi_read(C_STATUS_ADDR, status_word);
+        assert status_word(2) = '0' and irq = '0'
+        report "CLEAR_STATUS did not clear missed_refill IRQ/status"
+        severity failure;
+        report "TEST 3 passed: missed_refill status, IRQ, and clear behavior verified"
+        severity note;
+
+        reset_dut;
+
+        report "TEST 4: bank-underrun status and IRQ assert when only one coefficient bank is provided"
+        severity note;
+
+        axi_write(C_CONTROL_ADDR, x"00000000");
+        axi_write(C_IRQ_ENABLE_ADDR, x"00000008");
+        axi_write(C_FU_PERIOD_ADDR, std_logic_vector(to_unsigned(C_PHASE3_FU_PERIOD_CYCLES, C_AXI_DATA_WIDTH)));
+        axi_write(C_BANK_SETS_ADDR, std_logic_vector(to_unsigned(C_BANK_SET_COUNT, C_AXI_DATA_WIDTH)));
+        coeff_single_bank_enable <= '1';
+        wait_for_signal_high(coeff_single_bank_done, C_INPUT_READY_TIMEOUT_CYCLES, "Timeout waiting for single-bank coefficient stream");
+        coeff_single_bank_enable <= '0';
+        wait_for_status_bit(4, '1', C_INPUT_READY_TIMEOUT_CYCLES, "Timeout waiting for single-bank active_set_available", status_word);
+        axi_write(C_CONTROL_ADDR, x"00000001");
+        wait_for_status_bit(5, '1', 3 * C_PHASE3_FU_PERIOD_CYCLES, "Timeout waiting for bank_underrun after single-bank stimulus", status_word);
+        assert irq = '1'
+        report "bank_underrun did not drive IRQ when IRQ_ENABLE[3] was set"
+        severity failure;
+        assert status_word(2) = '0' and status_word(3) = '0' and status_word(6) = '0' and status_word(7) = '0'
+        report "Single-bank missed-refill test raised an unexpected timing/write/FIR error"
+        severity failure;
+        report "TEST 4 passed: bank_underrun status and IRQ reported"
+        severity note;
+
+        reset_dut;
+
+        report "TEST 5: reload_timing_error status and IRQ assert when a Fu tick is forced during active reload"
+        severity note;
+
+        axi_write(C_CONTROL_ADDR, x"00000000");
+        axi_write(C_IRQ_ENABLE_ADDR, x"00000004");
+        axi_write(C_FU_PERIOD_ADDR, std_logic_vector(to_unsigned(C_FORCED_TIMING_FU_PERIOD_CYCLES, C_AXI_DATA_WIDTH)));
+        axi_write(C_BANK_SETS_ADDR, std_logic_vector(to_unsigned(C_BANK_SET_COUNT, C_AXI_DATA_WIDTH)));
+        coeff_timing_bank_enable <= '1';
+        wait_for_signal_high(coeff_timing_bank_done, C_INPUT_READY_TIMEOUT_CYCLES, "Timeout waiting for timing-error coefficient bank");
+        coeff_timing_bank_enable <= '0';
+        wait_for_status_bit(4, '1', C_INPUT_READY_TIMEOUT_CYCLES, "Timeout waiting for timing-error active_set_available", status_word);
+        axi_write(C_CONTROL_ADDR, x"00000001");
+        wait_for_status_bit(0, '1', 2 * C_FORCED_TIMING_FU_PERIOD_CYCLES, "Timeout waiting for active reload before forced timing fault", status_word);
+        axi_write(C_FU_PERIOD_ADDR, x"00000000");
+        wait_clock_cycles(1);
+        axi_write(C_FU_PERIOD_ADDR, std_logic_vector(to_unsigned(2, C_AXI_DATA_WIDTH)));
+        wait_for_status_bit(3, '1', C_INPUT_READY_TIMEOUT_CYCLES, "Timeout waiting for forced reload_timing_error", status_word);
+        assert irq = '1'
+        report "reload_timing_error did not drive IRQ when IRQ_ENABLE[2] was set"
+        severity failure;
+        report "Forced reload_timing_error diagnostics: missed_refill=" & std_logic'image(status_word(2)) &
+               ", bank_underrun=" & std_logic'image(status_word(5)) &
+               ", bank_write_error=" & std_logic'image(status_word(6)) &
+               ", fir_reload_error=" & std_logic'image(status_word(7))
+        severity note;
+        assert status_word(2) = '0' and status_word(6) = '0'
+        report "Forced reload_timing_error test raised unexpected missed-refill/write-error bits"
+        severity failure;
+        report "TEST 5 passed: reload_timing_error status and IRQ reported"
+        severity note;
+
+        reset_dut;
+
+        report "TEST 6: full startup, continuous bank switching, pause/resume, IRQ masking, underrun recovery, and output verification"
+        severity note;
 
         axi_write(C_FU_PERIOD_ADDR, x"0000006F");
         axi_read(C_FU_PERIOD_ADDR, readback_word);
@@ -885,6 +1108,21 @@ begin
         report "DEBUG active_bank did not report bank 0 after the first coefficient bank was filled"
         severity failure;
 
+        recovery_timeout_counter := 0;
+        loop
+            axi_read(C_DEBUG_ADDR, readback_word);
+            exit when readback_word(5) = '1';
+            wait_clock_cycles(1);
+            recovery_timeout_counter := recovery_timeout_counter + 1;
+
+            assert recovery_timeout_counter < C_INPUT_READY_TIMEOUT_CYCLES
+            report "Timeout waiting for DEBUG bank1_ready before enabling the sequencer"
+            severity failure;
+        end loop;
+        assert readback_word(4) = '1' and readback_word(5) = '1' and readback_word(3) = '0'
+        report "DEBUG did not report both banks ready with Bank 0 active before continuous switching"
+        severity failure;
+
         axi_write(C_IRQ_ENABLE_ADDR, x"00000001");
         block_done_irq_monitor_enable <= '1';
         axi_write(C_CONTROL_ADDR, x"00000001");
@@ -910,6 +1148,10 @@ begin
         severity note;
         assert block_done_irq_pulse_count = C_CONTINUOUS_RELOAD_SET_COUNT / C_BANK_SET_COUNT
         report "block_done did not generate the expected number of one-clock IRQ pulses"
+        severity failure;
+        axi_read(C_DEBUG_ADDR, readback_word);
+        assert readback_word(3) = '0'
+        report "DEBUG active_bank did not return to Bank 0 after Bank0-to-Bank1-to-Bank0 switching"
         severity failure;
         assert status_word(2) = '0' and status_word(3) = '0' and status_word(6) = '0' and status_word(7) = '0'
         report "AXI status reported reload/timing/write error bits after the continuous active packet"
