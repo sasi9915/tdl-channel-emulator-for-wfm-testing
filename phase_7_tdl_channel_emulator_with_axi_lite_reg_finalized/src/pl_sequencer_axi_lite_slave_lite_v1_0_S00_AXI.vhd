@@ -17,17 +17,22 @@ entity pl_sequencer_axi_lite_slave_lite_v1_0_S00_AXI is
 	port(
 		-- Users to add ports here
 		seq_enable              : out std_logic;
-		seq_fu_period_cycles    : out std_logic_vector(31 downto 0);
-		cfg_bank_sets_per_bank  : out std_logic_vector(31 downto 0);
-		seq_clear_status        : out std_logic;
-		seq_reload_active       : in  std_logic;
-		seq_reload_block_done   : in  std_logic;
-		seq_missed_refill       : in  std_logic;
-		seq_reload_timing_error : in  std_logic;
-		coeff_bank_active_set_available : in std_logic;
-		coeff_bank_underrun             : in std_logic;
-		coeff_bank_write_error          : in std_logic;
-		seq_state_debug         : in  std_logic_vector(2 downto 0);
+			seq_fu_period_cycles    : out std_logic_vector(31 downto 0);
+			cfg_bank_sets_per_bank  : out std_logic_vector(31 downto 0);
+			irq_enable              : out std_logic_vector(5 downto 0);
+			seq_clear_status        : out std_logic;
+			seq_reload_active       : in  std_logic;
+			seq_reload_block_done   : in  std_logic;
+			seq_missed_refill       : in  std_logic;
+			seq_reload_timing_error : in  std_logic;
+			coeff_bank_active_set_available : in std_logic;
+			coeff_bank_underrun             : in std_logic;
+			coeff_bank_write_error          : in std_logic;
+			fir_reload_error        : in  std_logic;
+			coeff_bank_active_bank  : in  std_logic;
+			coeff_bank0_ready       : in  std_logic;
+			coeff_bank1_ready       : in  std_logic;
+			seq_state_debug         : in  std_logic_vector(2 downto 0);
 		-- User ports ends
 		-- Do not modify the ports beyond this line
 
@@ -151,21 +156,26 @@ begin
 	S_AXI_ARREADY                                 <= axi_arready;
 	S_AXI_RRESP                                   <= axi_rresp;
 	S_AXI_RVALID                                  <= axi_rvalid;
-	seq_enable                                    <= slv_reg0(0);
-	seq_fu_period_cycles                          <= slv_reg1;
-	cfg_bank_sets_per_bank                        <= slv_reg2;
-	seq_clear_status                              <= r_clear_status;
-	w_control_reg                                 <= slv_reg0 and std_logic_vector(to_unsigned(1, C_S_AXI_DATA_WIDTH));
-	w_status_reg(C_S_AXI_DATA_WIDTH - 1 downto 7) <= (others => '0');
-	w_status_reg(6)                               <= coeff_bank_write_error;
+		seq_enable                                    <= slv_reg0(0);
+		seq_fu_period_cycles                          <= slv_reg1;
+		cfg_bank_sets_per_bank                        <= slv_reg2;
+		irq_enable                                    <= slv_reg3(5 downto 0);
+		seq_clear_status                              <= r_clear_status;
+		w_control_reg                                 <= slv_reg0 and std_logic_vector(to_unsigned(1, C_S_AXI_DATA_WIDTH));
+		w_status_reg(C_S_AXI_DATA_WIDTH - 1 downto 8) <= (others => '0');
+		w_status_reg(7)                               <= fir_reload_error;
+		w_status_reg(6)                               <= coeff_bank_write_error;
 	w_status_reg(5)                               <= coeff_bank_underrun;
 	w_status_reg(4)                               <= coeff_bank_active_set_available;
 	w_status_reg(3)                               <= seq_reload_timing_error;
 	w_status_reg(2)                               <= seq_missed_refill;
 	w_status_reg(1)                               <= seq_reload_block_done;
 	w_status_reg(0)                               <= seq_reload_active;
-	w_debug_reg(C_S_AXI_DATA_WIDTH - 1 downto 3)  <= (others => '0');
-	w_debug_reg(2 downto 0)                       <= seq_state_debug;
+		w_debug_reg(C_S_AXI_DATA_WIDTH - 1 downto 6)  <= (others => '0');
+		w_debug_reg(5)                                <= coeff_bank1_ready;
+		w_debug_reg(4)                                <= coeff_bank0_ready;
+		w_debug_reg(3)                                <= coeff_bank_active_bank;
+		w_debug_reg(2 downto 0)                       <= seq_state_debug;
 	w_capability_reg                              <= x"00060001";
 	mem_logic                                     <= axi_awaddr(ADDR_LSB + OPT_MEM_ADDR_BITS downto ADDR_LSB);
 	axi_awready                                  <= '1' when S_AXI_ARESETN = '1' and r_aw_pending = '0' and axi_bvalid = '0' else '0';
