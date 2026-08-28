@@ -124,14 +124,14 @@ architecture rtl of complex_channel_emulator is
     signal w_imag_reload_tlast_unexpected : std_logic;
 
     -- FIR output paths
-    signal w_i_hr : signed(36 downto 0);
-    signal w_q_hr : signed(36 downto 0);
-    signal w_i_hi : signed(36 downto 0);
-    signal w_q_hi : signed(36 downto 0);
+    signal w_i_hr : signed(38 downto 0);
+    signal w_q_hr : signed(38 downto 0);
+    signal w_i_hi : signed(38 downto 0);
+    signal w_q_hi : signed(38 downto 0);
 
     -- Complex result, one extra bit for addition/subtraction
-    signal w_output_i : signed(37 downto 0);
-    signal w_output_q : signed(37 downto 0);
+    signal w_output_i : signed(39 downto 0);
+    signal w_output_q : signed(39 downto 0);
 
 begin
 
@@ -184,11 +184,11 @@ begin
 
     -- Extract the four real convolutions
     -- FIR_REAL:  Path 0 = I*hR and  Path 1 = Q*hR
-    w_i_hr <= signed(w_real_m_tdata(36 downto 0));
-    w_q_hr <= signed(w_real_m_tdata(76 downto 40));
+    w_i_hr <= signed(w_real_m_tdata(38 downto 0));
+    w_q_hr <= signed(w_real_m_tdata(78 downto 40));
     -- FIR_IMAG: Path 0 = I*hI  and Path 1 = Q*hI
-    w_i_hi <= signed(w_imag_m_tdata(36 downto 0));
-    w_q_hi <= signed(w_imag_m_tdata(76 downto 40));
+    w_i_hi <= signed(w_imag_m_tdata(38 downto 0));
+    w_q_hi <= signed(w_imag_m_tdata(78 downto 40));
 
     -- output I = I*hR - Q*hI   / output Q = I*hI + Q*hR
     w_output_i      <= resize(w_i_hr, w_output_i'length) - resize(w_q_hi, w_output_i'length);
