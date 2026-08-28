@@ -11,7 +11,7 @@ The buffer uses two protected banks:
 - one active bank read by the sequencer side
 - one inactive bank filled by the future DMA/write side
 
-Default RTL sizing now follows the proposal's block-ahead target:
+Default RTL sizing is set to the BRAM-friendly single-bandwidth profile:
 
 - tap count: 32
 - maximum coefficient sets per bank: 600
@@ -30,6 +30,8 @@ The standalone testbench still uses 8 sets by default so simulation remains shor
   - Simple-dual-port BRAM template used by the controller.
 - `tb/tb_coeff_ping_pong_buffer.vhd`
   - Standalone testbench for bank fill, swap, write backpressure and underrun.
+- `tb/tb_coeff_ping_pong_bram.vhd`
+  - Standalone testbench for the inferred BRAM memory wrapper.
 - `sim/run_ghdl.sh`
   - Local GHDL simulation script.
 - `sim/run_ghdl_scaled.sh`
@@ -44,6 +46,7 @@ The standalone testbench still uses 8 sets by default so simulation remains shor
 - missing final `wr_last` rejects the malformed write block
 - clearing a write-format error restarts the write position
 - inactive bank can be filled while active bank remains readable
+- inactive bank can be filled set-by-set while active bank sets are consumed, then swapped in immediately after the final active-bank consume
 - ready inactive bank blocks writes without falsely treating held `wr_valid` as an error
 - active bank swaps atomically after all sets are consumed
 - underrun asserts when active bank is exhausted and the next bank is not ready
@@ -53,7 +56,7 @@ The standalone testbench still uses 8 sets by default so simulation remains shor
 - `wr_ready` is registered and cleared during reset so a write handshake cannot be accepted while reset is active
 - `consume_set_ready` is blocked during `clear_errors` so no consume handshake is falsely accepted
 - `active_set_available` and `consume_set_ready` are registered status outputs
-- `rd_en`/`rd_valid` prove the one-clock BRAM read path used by the sequencer side
+- `rd_en`/`rd_valid` prove the registered memory read path used by the sequencer side
 
 ## Interface Notes
 
@@ -65,7 +68,8 @@ The standalone testbench still uses 8 sets by default so simulation remains shor
 - Packing is `data(G_COEFF_WIDTH - 1 downto 0) = real` and `data((2 * G_COEFF_WIDTH) - 1 downto G_COEFF_WIDTH) = imaginary`.
 - `wr_ready` is driven from an internal register that is cleared in the reset and `clear_errors` branches.
 - `wr_last` marks the end of one full buffer bank, not the FIR reload packet `tlast`.
-- `rd_data` is registered from a synchronous BRAM read, so it is valid one clock after `rd_en` and `rd_tap_index`.
+- `rd_data` is registered from the selected synchronous memory, so it is valid only when `rd_valid = '1'`.
+- The inferred BRAM wrapper currently has one-clock read latency.
 - The sequencer side should use `rd_data` only when `rd_valid = '1'`.
 - `active_set_available` means the active bank currently contains an unread coefficient set.
 - A single registered availability flag drives both `active_set_available` and `consume_set_ready`.
@@ -81,7 +85,7 @@ The standalone testbench still uses 8 sets by default so simulation remains shor
 
 ## Memory Sizing
 
-The RTL has a `G_RAM_STYLE` generic, defaulting to `"block"`, and applies it to the simple-dual-port coefficient RAM using Vivado's `ram_style` attribute.
+This branch is the BRAM-only implementation. The top-level buffer directly instantiates the inferred simple-dual-port BRAM wrapper, with `G_RAM_STYLE => "block"` as the default synthesis hint.
 
 The memory is one physical RAM with two logical address regions:
 
@@ -93,13 +97,16 @@ For packed 32-bit complex coefficients:
 - `32 taps x 300 sets x 4 bytes = 38.4 KB` per bank
 - `32 taps x 600 sets x 4 bytes = 76.8 KB` per bank
 - ping-pong total for 32 taps and 600 sets is about `153.6 KB`
+- `128 taps x 300 sets x 4 bytes = 153.6 KB` per bank
+- `128 taps x 600 sets x 4 bytes = 307.2 KB` per bank
+- ping-pong total for 128 taps and 600 sets is about `614.4 KB`
 
-The preferred first implementation target is BRAM. URAM can be tested later by setting `G_RAM_STYLE => "ultra"` for larger 128-tap / 600-set builds if BRAM use becomes too high.
+The 32-tap / 600-set profile maps to BRAM and is intended as the first active implementation profile. A 128-tap profile can still be explored by changing `G_TAP_COUNT`, but it will consume significantly more BRAM because this branch does not target UltraRAM.
 
 ## Run
 
 ```bash
-cd phase_4_block_ahead_buffer
+cd 'phase_4_bram_on;y_buffer_ping_pong'
 bash sim/run_ghdl.sh
 ```
 
@@ -131,7 +138,7 @@ The copied Vivado project references the editable source files directly:
 - `../tb/tb_coeff_ping_pong_buffer.vhd`
 - `../constraints/phase_4_timing.xdc`
 
-So changes made in VS Code should be visible in Vivado after reloading the file or relaunching simulation.
+In this working project Vivado may still show imported copies under `work_proj/work_proj.srcs/.../imports/...`. If Vivado does not show a VS Code change, sync or re-add the file as a reference instead of importing a copied source.
 
 ## Next Integration Step
 

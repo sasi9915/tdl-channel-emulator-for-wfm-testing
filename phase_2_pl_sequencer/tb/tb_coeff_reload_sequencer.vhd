@@ -10,82 +10,97 @@ end entity;
 
 architecture sim of tb_coeff_reload_sequencer is
 
-    constant C_CLK_PERIOD : time    := 10 ns;
-    constant C_TAP_COUNT  : integer := 32;
-    constant C_SET_COUNT  : integer := 3;
-    constant C_FU_PERIOD_CYCLES : integer := 100;
-    constant C_FAULT_FU_PERIOD_CYCLES : integer := 10;
-    constant C_TIMEOUT    : integer := 20000;
+    constant C_CLK_PERIOD                : time    := 3333 ps;
+    constant C_RELOAD_WORD_COUNT         : integer := 133;
+    constant C_FIFO_DEPTH                : integer := 256;
+    constant C_SET_COUNT                 : integer := 3;
+    constant C_FU_PERIOD_CYCLES          : integer := 50000;
+    constant C_FAULT_FU_PERIOD_CYCLES    : integer := 250;
+    constant C_REFILL_TEST_PERIOD_CYCLES : integer := 50000;
+    constant C_TIMEOUT                   : integer := 250000;
+    constant C_FIFO_RESET_WAIT_TIME      : time    := 2000 ns;
 
-    signal aclk    : std_logic := '0';
-    signal aresetn : std_logic := '0';
-    signal start   : std_logic := '0';
-    signal fu_tick : std_logic := '0';
+    signal aclk                : std_logic             := '0';
+    signal aresetn             : std_logic             := '0';
+    signal enable              : std_logic             := '0';
+    signal clear_status        : std_logic             := '0';
+    signal fu_period_cycles    : unsigned(31 downto 0) := to_unsigned(C_FU_PERIOD_CYCLES, 32);
 
-    signal coeff_real_value : std_logic_vector(15 downto 0);
-    signal coeff_imag_value : std_logic_vector(15 downto 0);
-    signal coeff_set_index  : integer range 0 to C_SET_COUNT - 1;
-    signal coeff_tap_index  : integer range 0 to C_TAP_COUNT - 1;
+    signal coeff_set_tvalid    : std_logic := '0';
+    signal coeff_set_tready    : std_logic;
+    signal coeff_set_tdata     : std_logic_vector(31 downto 0) := (others => '0');
 
-    signal real_reload_tvalid : std_logic;
-    signal real_reload_tready : std_logic := '1';
-    signal real_reload_tdata  : std_logic_vector(15 downto 0);
-    signal real_reload_tlast  : std_logic;
+    signal real_reload_tvalid  : std_logic;
+    signal real_reload_tready  : std_logic := '1';
+    signal real_reload_tdata   : std_logic_vector(15 downto 0);
+    signal real_reload_tlast   : std_logic;
 
-    signal imag_reload_tvalid : std_logic;
-    signal imag_reload_tready : std_logic := '1';
-    signal imag_reload_tdata  : std_logic_vector(15 downto 0);
-    signal imag_reload_tlast  : std_logic;
+    signal imag_reload_tvalid  : std_logic;
+    signal imag_reload_tready  : std_logic := '1';
+    signal imag_reload_tdata   : std_logic_vector(15 downto 0);
+    signal imag_reload_tlast   : std_logic;
 
-    signal real_config_tvalid : std_logic;
-    signal real_config_tready : std_logic := '1';
-    signal real_config_tdata  : std_logic_vector(7 downto 0);
+    signal real_config_tvalid  : std_logic;
+    signal real_config_tready  : std_logic := '1';
+    signal real_config_tdata   : std_logic_vector(7 downto 0);
 
-    signal imag_config_tvalid : std_logic;
-    signal imag_config_tready : std_logic := '1';
-    signal imag_config_tdata  : std_logic_vector(7 downto 0);
+    signal imag_config_tvalid  : std_logic;
+    signal imag_config_tready  : std_logic := '1';
+    signal imag_config_tdata   : std_logic_vector(7 downto 0);
 
-    signal busy         : std_logic;
-    signal done         : std_logic;
-    signal block_done   : std_logic;
-    signal timing_error : std_logic;
-    signal state_debug  : std_logic_vector(2 downto 0);
+    signal reload_active       : std_logic;
+    signal reload_set_done     : std_logic;
+    signal reload_block_done   : std_logic;
+    signal missed_refill       : std_logic;
+    signal reload_timing_error : std_logic;
+    signal state_debug         : std_logic_vector(2 downto 0);
 
-    signal dbg_reload_accept      : std_logic                          := '0';
-    signal dbg_config_accept      : std_logic                          := '0';
-    signal dbg_accepted_set_index : integer range 0 to C_SET_COUNT - 1 := 0;
-    signal dbg_accepted_tap_index : integer range 0 to C_TAP_COUNT - 1 := 0;
+    signal dbg_reload_accept      : std_logic                                := '0';
+    signal dbg_config_accept      : std_logic                                := '0';
+    signal dbg_set_fifo_accept    : std_logic                                := '0';
+    signal dbg_accepted_set_index : integer range 0 to C_SET_COUNT - 1       := 0;
+    signal dbg_accepted_word_index : integer range 0 to C_RELOAD_WORD_COUNT - 1 := 0;
 
-    signal lfsr_reg            : std_logic_vector(15 downto 0)                := x"BEEF";
-    signal lfsr_feedback       : std_logic;
-    signal reload_handshake    : std_logic;
-    signal config_handshake    : std_logic;
-    signal expected_tap_reg    : integer range 0 to C_TAP_COUNT - 1           := 0;
-    signal expected_set_reg    : integer range 0 to C_SET_COUNT - 1           := 0;
-    signal reload_count_reg    : integer range 0 to C_SET_COUNT * C_TAP_COUNT := 0;
-    signal config_count_reg    : integer range 0 to C_SET_COUNT               := 0;
-    signal done_count_reg      : integer range 0 to C_SET_COUNT               := 0;
-    signal timeout_counter_reg : integer                                      := 0;
+    signal lfsr_reg                  : std_logic_vector(15 downto 0)                         := x"BEEF";
+    signal lfsr_feedback             : std_logic;
+    signal reload_handshake          : std_logic;
+    signal config_handshake          : std_logic;
+    signal expected_word_reg         : integer range 0 to C_RELOAD_WORD_COUNT - 1             := 0;
+    signal expected_set_reg          : integer range 0 to C_SET_COUNT - 1                     := 0;
+    signal reload_count_reg          : integer range 0 to C_SET_COUNT * C_RELOAD_WORD_COUNT   := 0;
+    signal config_count_reg          : integer range 0 to C_SET_COUNT                         := 0;
+    signal reload_set_done_count_reg : integer range 0 to C_SET_COUNT                         := 0;
+    signal timeout_counter_reg       : integer                                                := 0;
 
     function real_coeff(
-        set_index : integer;
-        tap_index : integer
+        set_index  : integer;
+        word_index : integer
     ) return integer is
     begin
-        return (set_index + 1) * 100 + tap_index;
+        return (set_index + 1) * 100 + word_index;
     end function;
 
     function imag_coeff(
-        set_index : integer;
-        tap_index : integer
+        set_index  : integer;
+        word_index : integer
     ) return integer is
     begin
-        return -((set_index + 1) * 100 + tap_index);
+        return -((set_index + 1) * 100 + word_index);
+    end function;
+
+    function pack_coeff(
+        real_value : integer;
+        imag_value : integer
+    ) return std_logic_vector is
+        variable packed_value : std_logic_vector(31 downto 0);
+    begin
+        packed_value(31 downto 16) := std_logic_vector(to_signed(real_value, 16));
+        packed_value(15 downto 0)  := std_logic_vector(to_signed(imag_value, 16));
+        return packed_value;
     end function;
 
 begin
 
-    -- clock  process
     clk_process : process
     begin
         aclk <= '0';
@@ -93,9 +108,6 @@ begin
         aclk <= '1';
         wait for C_CLK_PERIOD / 2;
     end process;
-
-    coeff_real_value <= std_logic_vector(to_signed(real_coeff(coeff_set_index, coeff_tap_index), 16));
-    coeff_imag_value <= std_logic_vector(to_signed(imag_coeff(coeff_set_index, coeff_tap_index), 16));
 
     lfsr_feedback <= lfsr_reg(15) xor lfsr_reg(13) xor lfsr_reg(12) xor lfsr_reg(10);
 
@@ -105,72 +117,80 @@ begin
 
     dut : entity work.coeff_reload_sequencer
         generic map(
-            G_TAP_COUNT    => C_TAP_COUNT,
-            G_SET_COUNT    => C_SET_COUNT,
-            G_COEFF_WIDTH  => 16,
-            G_CONFIG_WIDTH => 8
+            G_RELOAD_WORD_COUNT => C_RELOAD_WORD_COUNT,
+            G_SET_COUNT         => C_SET_COUNT,
+            G_COEFF_WIDTH       => 16,
+            G_CONFIG_WIDTH      => 8,
+            G_FIFO_DEPTH        => C_FIFO_DEPTH
         )
         port map(
-            aclk               => aclk,
-            aresetn            => aresetn,
-            start              => start,
-            fu_tick            => fu_tick,
-            coeff_real_value   => coeff_real_value,
-            coeff_imag_value   => coeff_imag_value,
-            coeff_set_index    => coeff_set_index,
-            coeff_tap_index    => coeff_tap_index,
-            real_reload_tvalid => real_reload_tvalid,
-            real_reload_tready => real_reload_tready,
-            real_reload_tdata  => real_reload_tdata,
-            real_reload_tlast  => real_reload_tlast,
-            imag_reload_tvalid => imag_reload_tvalid,
-            imag_reload_tready => imag_reload_tready,
-            imag_reload_tdata  => imag_reload_tdata,
-            imag_reload_tlast  => imag_reload_tlast,
-            real_config_tvalid => real_config_tvalid,
-            real_config_tready => real_config_tready,
-            real_config_tdata  => real_config_tdata,
-            imag_config_tvalid => imag_config_tvalid,
-            imag_config_tready => imag_config_tready,
-            imag_config_tdata  => imag_config_tdata,
-            busy               => busy,
-            done               => done,
-            block_done         => block_done,
-            timing_error       => timing_error,
-            state_debug        => state_debug
+            aclk                => aclk,
+            aresetn             => aresetn,
+
+            enable              => enable,
+            clear_status        => clear_status,
+            fu_period_cycles    => fu_period_cycles,
+
+            coeff_set_tvalid    => coeff_set_tvalid,
+            coeff_set_tready    => coeff_set_tready,
+            coeff_set_tdata     => coeff_set_tdata,
+
+            real_reload_tvalid  => real_reload_tvalid,
+            real_reload_tready  => real_reload_tready,
+            real_reload_tdata   => real_reload_tdata,
+            real_reload_tlast   => real_reload_tlast,
+
+            imag_reload_tvalid  => imag_reload_tvalid,
+            imag_reload_tready  => imag_reload_tready,
+            imag_reload_tdata   => imag_reload_tdata,
+            imag_reload_tlast   => imag_reload_tlast,
+
+            real_config_tvalid  => real_config_tvalid,
+            real_config_tready  => real_config_tready,
+            real_config_tdata   => real_config_tdata,
+
+            imag_config_tvalid  => imag_config_tvalid,
+            imag_config_tready  => imag_config_tready,
+            imag_config_tdata   => imag_config_tdata,
+
+            reload_active       => reload_active,
+            reload_set_done     => reload_set_done,
+            reload_block_done   => reload_block_done,
+            missed_refill       => missed_refill,
+            reload_timing_error => reload_timing_error,
+            state_debug         => state_debug
         );
 
-    tready_driver : process(aclk)
+    tready_driver : process(aclk, aresetn)
     begin
-        if rising_edge(aclk) then
-            if aresetn = '0' then
+        if aresetn = '0' then
+            real_reload_tready <= '1';
+            imag_reload_tready <= '1';
+            real_config_tready <= '1';
+            imag_config_tready <= '1';
+            lfsr_reg           <= x"BEEF";
+        elsif rising_edge(aclk) then
+            lfsr_reg <= lfsr_reg(14 downto 0) & lfsr_feedback;
+
+            if lfsr_reg(2 downto 0) = "000" then
+                real_reload_tready <= '0';
+                imag_reload_tready <= '0';
+            else
                 real_reload_tready <= '1';
                 imag_reload_tready <= '1';
+            end if;
+
+            if lfsr_reg(5 downto 3) = "101" then
+                real_config_tready <= '0';
+                imag_config_tready <= '0';
+            else
                 real_config_tready <= '1';
                 imag_config_tready <= '1';
-                lfsr_reg           <= x"BEEF";
-            else
-                lfsr_reg <= lfsr_reg(14 downto 0) & lfsr_feedback;
-
-                if lfsr_reg(2 downto 0) = "000" then
-                    real_reload_tready <= '0';
-                    imag_reload_tready <= '0';
-                else
-                    real_reload_tready <= '1';
-                    imag_reload_tready <= '1';
-                end if;
-
-                if lfsr_reg(5 downto 3) = "101" then
-                    real_config_tready <= '0';
-                    imag_config_tready <= '0';
-                else
-                    real_config_tready <= '1';
-                    imag_config_tready <= '1';
-                end if;
             end if;
         end if;
     end process;
 
+    -- wait clock cycles 
     stimulus : process
         procedure wait_clock_cycles(
             constant number_of_cycles : integer
@@ -181,187 +201,260 @@ begin
             end loop;
         end procedure;
 
-        procedure send_fu_tick is
+
+        -- will load a complete coefficient set into the DUT's FIFO, waiting for the DUT to accept each word
+        procedure load_coefficient_set(
+            constant set_index : integer
+        ) is
         begin
-            fu_tick <= '1';
-            wait until rising_edge(aclk);
-            fu_tick <= '0';
+            for word_index in 0 to C_RELOAD_WORD_COUNT - 1 loop
+                coeff_set_tdata  <= pack_coeff(real_coeff(set_index, word_index), imag_coeff(set_index, word_index));
+                coeff_set_tvalid <= '1';
+
+                loop
+                    wait until rising_edge(aclk);
+                    exit when coeff_set_tready = '1';
+                end loop;
+            end loop;
+
+            coeff_set_tvalid <= '0';
+            coeff_set_tdata  <= (others => '0');
         end procedure;
+
     begin
-        aresetn <= '0';
-        start   <= '0';
-        fu_tick <= '0';
+        aresetn          <= '0';
+        enable           <= '0';
+        clear_status     <= '0';
+        coeff_set_tvalid <= '0';
+        coeff_set_tdata  <= (others => '0');
+        fu_period_cycles <= to_unsigned(C_FU_PERIOD_CYCLES, 32);
         wait_clock_cycles(10);
 
+        -- TEST 1: Normal operation test
         aresetn <= '1';
         wait_clock_cycles(2);
+        wait for C_FIFO_RESET_WAIT_TIME;
+        wait until rising_edge(aclk);
 
-        start <= '1';
-        wait_clock_cycles(2);
-
-        report "Starting normal fixed-FU-period reload test"
+        report "Starting FIFO-prefetch Fu reload test"
         severity note;
 
-        for set_index in 0 to C_SET_COUNT - 1 loop
-            send_fu_tick;
-            wait_clock_cycles(C_FU_PERIOD_CYCLES - 1);
+        enable <= '1';
+        wait until rising_edge(aclk);
 
-            assert timing_error = '0'
-            report "Unexpected timing error before next FU tick"
-            severity failure;
-        end loop;
+        load_coefficient_set(0);
+        load_coefficient_set(1);
+        load_coefficient_set(2);
 
-        if block_done /= '1' then
-            wait until block_done = '1' or timing_error = '1';
+        wait until reload_block_done = '1' or missed_refill = '1' or reload_timing_error = '1';
+
+        wait_clock_cycles(5);
+
+        assert missed_refill = '0'
+        report "Unexpected missed-refill status during normal test"
+        severity failure;
+
+        assert reload_timing_error = '0'
+        report "Unexpected timing error during normal test"
+        severity failure;
+
+        assert reload_block_done = '1'
+        report "Reload block done was not asserted"
+        severity failure;
+
+        enable <= '0';
+        wait_clock_cycles(5);
+
+
+        ---- TEST 2: FIFO missed-refill test
+        aresetn          <= '0';
+        clear_status     <= '0';
+        coeff_set_tvalid <= '0';
+        coeff_set_tdata  <= (others => '0');
+        fu_period_cycles <= to_unsigned(C_REFILL_TEST_PERIOD_CYCLES, 32);
+        wait_clock_cycles(5);
+
+        aresetn <= '1';
+        wait_clock_cycles(2);
+        wait for C_FIFO_RESET_WAIT_TIME;
+        wait until rising_edge(aclk);
+
+        report "Starting FIFO missed-refill test"
+        severity note;
+
+        enable <= '1';
+
+        if missed_refill /= '1' then
+            wait until missed_refill = '1' or reload_active = '1';
         end if;
 
-        wait_clock_cycles(5);
-
-        assert timing_error = '0'
-        report "Unexpected timing error after final FU tick"
+        assert missed_refill = '1'
+        report "Missed refill was not asserted when the set FIFO was not ready"
         severity failure;
 
-        assert block_done = '1'
-        report "Block done was not asserted"
+        assert reload_active = '0'
+        report "Sequencer started reload even though no complete FIFO set was available"
         severity failure;
 
-        start <= '0';
         wait_clock_cycles(5);
 
-        aresetn <= '0';
-        fu_tick <= '0';
+
+        -- send clear signal from AXI lite interface to clear the missed-refill status
+        clear_status <= '1';
+        wait until rising_edge(aclk);
+        clear_status <= '0';
+        wait until rising_edge(aclk);
+
+        assert missed_refill = '0'
+        report "Missed refill did not clear after clear_status"
+        severity failure;
+
+        enable <= '0';
+        wait_clock_cycles(5);
+
+        aresetn          <= '0';
+        clear_status     <= '0';
+        coeff_set_tvalid <= '0';
+        coeff_set_tdata  <= (others => '0');
+        fu_period_cycles <= to_unsigned(C_FAULT_FU_PERIOD_CYCLES, 32);
         wait_clock_cycles(5);
 
         aresetn <= '1';
         wait_clock_cycles(2);
+        wait for C_FIFO_RESET_WAIT_TIME;
+        wait until rising_edge(aclk);
 
-        start <= '1';
-        wait_clock_cycles(2);
-
-        report "Starting early-FU timing-error test"
+        -- TEST 3: Short-Fu-period timing-error test
+        report "Starting short-Fu-period timing-error test"
         severity note;
 
-        send_fu_tick;
-        wait_clock_cycles(C_FAULT_FU_PERIOD_CYCLES - 1);
-        send_fu_tick;
-        wait_clock_cycles(2);
+        enable <= '1';
+        wait until rising_edge(aclk);
+        load_coefficient_set(0);
 
-        assert timing_error = '1'
-        report "Timing error was not asserted when the next FU tick arrived too early"
+        if reload_timing_error /= '1' then
+            wait until reload_timing_error = '1' or reload_block_done = '1' or missed_refill = '1';
+        end if;
+
+        assert reload_timing_error = '1'
+        report "Timing error was not asserted when Fu period was too short"
         severity failure;
 
-        assert block_done = '0'
-        report "Block done asserted during timing-error test"
+        assert reload_block_done = '0'
+        report "Reload block done asserted during timing-error test"
         severity failure;
 
-        start <= '0';
+        enable <= '0';
         wait_clock_cycles(4);
 
-        assert timing_error = '0'
-        report "Timing error did not clear after returning to idle"
+        assert reload_timing_error = '0'
+        report "Timing error did not clear after disabling the sequencer"
         severity failure;
 
-        report "Coefficient reload sequencer tests completed"
+        report "Coefficient reload sequencer FIFO tests completed"
         severity note;
 
+        wait_clock_cycles(500);
         stop;
         wait;
     end process;
 
-    checker : process(aclk)
+    checker : process(aclk, aresetn)
     begin
-        if rising_edge(aclk) then
-            if aresetn = '0' then
-                expected_tap_reg    <= 0;
-                expected_set_reg    <= 0;
-                reload_count_reg    <= 0;
-                config_count_reg    <= 0;
-                done_count_reg      <= 0;
-                timeout_counter_reg <= 0;
-                dbg_reload_accept   <= '0';
-                dbg_config_accept   <= '0';
-            else
-                dbg_reload_accept   <= '0';
-                dbg_config_accept   <= '0';
-                timeout_counter_reg <= timeout_counter_reg + 1;
+        if aresetn = '0' then
+            expected_word_reg         <= 0;
+            expected_set_reg          <= 0;
+            reload_count_reg          <= 0;
+            config_count_reg          <= 0;
+            reload_set_done_count_reg <= 0;
+            timeout_counter_reg       <= 0;
+            dbg_reload_accept         <= '0';
+            dbg_config_accept         <= '0';
+            dbg_set_fifo_accept       <= '0';
+        elsif rising_edge(aclk) then
+            dbg_reload_accept   <= '0';
+            dbg_config_accept   <= '0';
+            dbg_set_fifo_accept <= '0';
+            timeout_counter_reg <= timeout_counter_reg + 1;
 
-                assert timeout_counter_reg < C_TIMEOUT
-                report "Sequencer test timed out"
-                severity failure;
+            assert timeout_counter_reg < C_TIMEOUT
+            report "Sequencer test timed out"
+            severity failure;
 
-                if reload_handshake = '1' then
+            if coeff_set_tvalid = '1' and coeff_set_tready = '1' then
+                dbg_set_fifo_accept <= '1';
+            end if;
 
-                    assert to_integer(signed(real_reload_tdata)) = real_coeff(expected_set_reg, expected_tap_reg)
-                    report "Unexpected real reload coefficient"
+            if reload_handshake = '1' then
+                assert to_integer(signed(real_reload_tdata)) = real_coeff(expected_set_reg, expected_word_reg)
+                report "Unexpected real reload coefficient"
+                severity error;
+
+                assert to_integer(signed(imag_reload_tdata)) = imag_coeff(expected_set_reg, expected_word_reg)
+                report "Unexpected imaginary reload coefficient"
+                severity error;
+
+                if expected_word_reg = C_RELOAD_WORD_COUNT - 1 then
+                    assert real_reload_tlast = '1' and imag_reload_tlast = '1'
+                    report "Missing reload TLAST on final word"
                     severity error;
 
-                    assert to_integer(signed(imag_reload_tdata)) = imag_coeff(expected_set_reg, expected_tap_reg)
-                    report "Unexpected imaginary reload coefficient"
-                    severity error;
-
-                    if expected_tap_reg = C_TAP_COUNT - 1 then
-                        assert real_reload_tlast = '1' and imag_reload_tlast = '1'
-                        report "Missing reload TLAST on final tap"
-                        severity error;
-
-                        report "Accepted final reload tap for set " & integer'image(expected_set_reg)
-                        severity note;
-                    else
-                        assert real_reload_tlast = '0' and imag_reload_tlast = '0'
-                        report "Unexpected reload TLAST before final tap"
-                        severity error;
-                    end if;
-
-                    dbg_reload_accept      <= '1';
-                    dbg_accepted_set_index <= expected_set_reg;
-                    dbg_accepted_tap_index <= expected_tap_reg;
-                    reload_count_reg       <= reload_count_reg + 1;
-
-                    if expected_tap_reg = C_TAP_COUNT - 1 then
-                        expected_tap_reg <= 0;
-                    else
-                        expected_tap_reg <= expected_tap_reg + 1;
-                    end if;
-                end if;
-
-                if config_handshake = '1' then
-
-                    assert expected_tap_reg = 0
-                    report "CONFIG accepted before a complete reload set"
-                    severity error;
-
-                    assert real_config_tdata = x"00" and imag_config_tdata = x"00"
-                    report "Unexpected CONFIG data"
-                    severity error;
-
-                    dbg_config_accept <= '1';
-                    config_count_reg  <= config_count_reg + 1;
-
-                    report "Accepted CONFIG number " & integer'image(config_count_reg + 1)
+                    report "Accepted final reload word for set " & integer'image(expected_set_reg)
                     severity note;
-
-                    if expected_set_reg /= C_SET_COUNT - 1 then
-                        expected_set_reg <= expected_set_reg + 1;
-                    end if;
-                end if;
-
-                if done = '1' then
-                    done_count_reg <= done_count_reg + 1;
-                end if;
-
-                if block_done = '1' then
-                    assert reload_count_reg = C_SET_COUNT * C_TAP_COUNT
-                    report "Unexpected number of reload transfers"
-                    severity error;
-
-                    assert config_count_reg = C_SET_COUNT
-                    report "Unexpected number of config transfers"
-                    severity error;
-
-                    assert done_count_reg = C_SET_COUNT or (done = '1' and done_count_reg = C_SET_COUNT - 1)
-                    report "Unexpected number of done pulses"
+                else
+                    assert real_reload_tlast = '0' and imag_reload_tlast = '0'
+                    report "Unexpected reload TLAST before final word"
                     severity error;
                 end if;
+
+                dbg_reload_accept       <= '1';
+                dbg_accepted_set_index  <= expected_set_reg;
+                dbg_accepted_word_index <= expected_word_reg;
+                reload_count_reg        <= reload_count_reg + 1;
+
+                if expected_word_reg = C_RELOAD_WORD_COUNT - 1 then
+                    expected_word_reg <= 0;
+                else
+                    expected_word_reg <= expected_word_reg + 1;
+                end if;
+            end if;
+
+            if config_handshake = '1' then
+                assert expected_word_reg = 0
+                report "CONFIG accepted before a complete reload set"
+                severity error;
+
+                assert real_config_tdata = x"00" and imag_config_tdata = x"00"
+                report "Unexpected CONFIG data"
+                severity error;
+
+                dbg_config_accept <= '1';
+                config_count_reg  <= config_count_reg + 1;
+
+                report "Accepted CONFIG number " & integer'image(config_count_reg + 1)
+                severity note;
+
+                if expected_set_reg /= C_SET_COUNT - 1 then
+                    expected_set_reg <= expected_set_reg + 1;
+                end if;
+            end if;
+
+            if reload_set_done = '1' then
+                reload_set_done_count_reg <= reload_set_done_count_reg + 1;
+            end if;
+
+            if reload_block_done = '1' then
+                assert reload_count_reg = C_SET_COUNT * C_RELOAD_WORD_COUNT
+                report "Unexpected number of reload transfers"
+                severity error;
+
+                assert config_count_reg = C_SET_COUNT
+                report "Unexpected number of config transfers"
+                severity error;
+
+                assert reload_set_done_count_reg = C_SET_COUNT or (reload_set_done = '1' and reload_set_done_count_reg = C_SET_COUNT - 1)
+                report "Unexpected number of reload-set-done pulses"
+                severity error;
             end if;
         end if;
     end process;

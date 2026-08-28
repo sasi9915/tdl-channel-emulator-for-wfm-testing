@@ -4,29 +4,72 @@ This folder starts Phase 2 of the supervisor proposal: building the PL sequencer
 
 ## Current Scope
 
-The first sequencer version is standalone. It does not include DMA or ping-pong buffering yet.
+The sequencer is standalone, but its coefficient input side now matches the planned block-ahead-buffer boundary. The large ping-pong buffer is still outside this module. This module contains a small XPM prefetch FIFO that can keep accepting coefficient words while the reload FSM consumes the current set.
 
 The RTL and standalone testbench avoid VHDL `variable` declarations to match the preferred project coding style. The sequencer FSM uses the project-style two-process structure: one clocked process for registered actions and one combinational process for `next_state` selection.
 
 It proves:
 
-- wait for `start`
-- wait for one `fu_tick` per coefficient update
-- send one complete 32-tap real/imag reload set
-- assert reload `tlast` only on tap 31
+- run when `enable` is asserted
+- generate the Fu update tick internally from `fu_period_cycles`
+- prefetch coefficient words into the internal XPM FIFO through `coeff_set_tvalid/tready/tdata`
+- use the FIFO `usedw` count to detect when at least one complete `G_RELOAD_WORD_COUNT` set is staged
+- continue accepting new coefficient words while the current set is being streamed, as long as FIFO space remains
+- stream the staged set to the real and imaginary FIR reload ports at the Fu tick
+- assert reload `tlast` only on the final reload word
 - send CONFIG only after the full reload set is accepted
 - repeat for three coefficient sets
-- drive `fu_tick` at a fixed FU period instead of waiting for `done`
 - tolerate reload/config `tready` backpressure
-- raise `timing_error` if a new `fu_tick` arrives while reload/config is still busy
-- intentionally sends an early `fu_tick` in a second scenario and checks that `timing_error` asserts
+- pulse `reload_set_done` after each reload+CONFIG commit
+- assert `reload_block_done` after the configured block is consumed
+- raise `missed_refill` if a Fu tick arrives when no complete FIFO-staged coefficient set is ready
+- raise `reload_timing_error` if the programmed Fu period is too short for reload+CONFIG
+
+The standalone testbench uses the proposal-level 300 MHz PL timing approximation:
+
+- `C_CLK_PERIOD = 3333 ps`
+- `C_RELOAD_WORD_COUNT = 133` for the current 128-tap FIR generated reload requirement
+- `C_FIFO_DEPTH = 256` to hold one complete reload set plus prefetch headroom for the next set
+- `C_FU_PERIOD_CYCLES = 50000` for the 6 kHz Fu worst-case interval
+- `C_REFILL_TEST_PERIOD_CYCLES = 50000` for missed-refill checking at the same Fu interval
+- `C_FIFO_RESET_WAIT_TIME = 2000 ns` after reset release before FIFO traffic, matching the local XPM FIFO wrapper usage requirement
+
+At 300 MHz, the 3 kHz Fu interval would use `fu_period_cycles = 100000`.
+
+The status names are intentionally explicit for later AXI-Lite mapping:
+
+- `reload_active` means the sequencer is currently performing reload/config work.
+- `reload_set_done` is a one-clock pulse after one Fu update is committed.
+- `reload_block_done` is a sticky block-complete status until disabled or cleared.
+- `missed_refill` is a sticky underrun/refill-miss status. In this FIFO-based version, it means the FIR reload deadline arrived before one complete set was staged in the FIFO.
+
+## Coefficient Set FIFO Boundary
+
+The expected final connection is:
+
+```text
+block-ahead ping-pong buffer -> set prefetcher -> XPM prefetch FIFO -> PL sequencer -> FIR reload/config
+```
+
+The ping-pong buffer still decides which large block/bank is active. The sequencer does not need to know whether the data came from buffer 0 or buffer 1. It only checks whether the local FIFO contains at least one complete coefficient set when the internally generated Fu tick arrives.
+
+The packed FIFO input format is:
+
+```text
+coeff_set_tdata(31 downto 16) = real coefficient word
+coeff_set_tdata(15 downto 0)  = imaginary coefficient word
+```
+
+For wider coefficients, the same packing rule is used with `G_COEFF_WIDTH`.
 
 ## Files
 
 - `src/coeff_reload_sequencer.vhd`
-  - RTL sequencer module.
+  - RTL sequencer module with an XPM prefetch FIFO.
 - `tb/tb_coeff_reload_sequencer.vhd`
-  - Standalone testbench with pseudo-random reload/config backpressure.
+  - Standalone testbench with FIFO-set loading and pseudo-random reload/config backpressure.
+- `tb/xpm_fifo_sync_wrap_sim.vhd`
+  - GHDL-only behavioral model of the project XPM FIFO wrapper.
 - `sim/run_ghdl.sh`
   - Local GHDL simulation script.
 
