@@ -48,6 +48,14 @@ architecture rtl of tb_complex_channel_emulator is
     -- 128-tap, sample-period-7 FIR configuration.
     constant C_RELOAD_ORDER : t_reload_order_array := generated_reload_order;
 
+    constant C_COEFF_FRAC_BITS : integer := 14;
+    constant C_Q14_ONE         : integer := 2 ** C_COEFF_FRAC_BITS;
+    constant C_Q14_HALF        : integer := C_Q14_ONE / 2;
+    constant C_Q14_QUARTER     : integer := C_Q14_ONE / 4;
+    constant C_Q14_EIGHTH      : integer := C_Q14_ONE / 8;
+    constant C_Q14_THREE_QUARTERS : integer := 3 * C_Q14_QUARTER;
+    constant C_Q14_THREE_EIGHTHS  : integer := 3 * C_Q14_EIGHTH;
+
     function reload_real_coefficient (
         set_index : integer;
         coefficient_index : integer
@@ -56,25 +64,25 @@ architecture rtl of tb_complex_channel_emulator is
         case set_index is
             when 0 =>
                 case coefficient_index is
-                    when 0 => return 3;
-                    when 1 => return 4;
-                    when 2 => return 5;
+                    when 0 => return C_Q14_HALF;       --  0.5000
+                    when 1 => return -C_Q14_QUARTER;   -- -0.2500
+                    when 2 => return C_Q14_EIGHTH;      --  0.1250
                     when others => return 0;
                 end case;
 
             when 1 =>
                 case coefficient_index is
-                    when 0 => return 1;
-                    when 1 => return 2;
-                    when 2 => return 3;
+                    when 0 => return C_Q14_QUARTER;    --  0.2500
+                    when 1 => return C_Q14_HALF;       --  0.5000
+                    when 2 => return -C_Q14_EIGHTH;    -- -0.1250
                     when others => return 0;
                 end case;
 
             when 2 =>
                 case coefficient_index is
-                    when 0 => return 5;
-                    when 1 => return 1;
-                    when 2 => return -2;
+                    when 0 => return C_Q14_THREE_QUARTERS; --  0.7500
+                    when 1 => return -C_Q14_HALF;          -- -0.5000
+                    when 2 => return C_Q14_QUARTER;        --  0.2500
                     when others => return 0;
                 end case;
 
@@ -91,22 +99,25 @@ architecture rtl of tb_complex_channel_emulator is
         case set_index is
             when 0 =>
                 case coefficient_index is
-                    when 1 => return -2;
-                    when 2 => return -3;
+                    when 0 => return C_Q14_QUARTER;    --  0.2500
+                    when 1 => return 0;                --  0.0000
+                    when 2 => return -C_Q14_HALF;      -- -0.5000
                     when others => return 0;
                 end case;
 
             when 1 =>
                 case coefficient_index is
-                    when 0 => return 1;
-                    when 2 => return -1;
+                    when 0 => return -C_Q14_QUARTER;   -- -0.2500
+                    when 1 => return C_Q14_EIGHTH;     --  0.1250
+                    when 2 => return C_Q14_QUARTER;    --  0.2500
                     when others => return 0;
                 end case;
 
             when 2 =>
                 case coefficient_index is
-                    when 1 => return 2;
-                    when 2 => return -2;
+                    when 0 => return -C_Q14_EIGHTH;       -- -0.1250
+                    when 1 => return C_Q14_THREE_EIGHTHS; --  0.3750
+                    when 2 => return C_Q14_HALF;          --  0.5000
                     when others => return 0;
                 end case;
 
@@ -205,13 +216,13 @@ begin
 
     dut : entity work.complex_channel_emulator
         port map(
-            aclk => aclk,
-            aresetn => aresetn,
+            s_axis_clk => aclk,
+            s_axis_resetn => aresetn,
 
-            s_axis_tvalid => s_axis_tvalid,
-            s_axis_tready => s_axis_tready,
-            s_axis_tdata => s_axis_tdata,
-            s_axis_tlast => s_axis_tlast,
+            s_axis_samp_tvalid => s_axis_tvalid,
+            s_axis_samp_tready => s_axis_tready,
+            s_axis_samp_tdata => s_axis_tdata,
+            s_axis_samp_tlast => s_axis_tlast,
 
             s_axis_config_real_tvalid => real_config_tvalid,
             s_axis_config_real_tready => real_config_tready,
@@ -231,10 +242,10 @@ begin
             s_axis_reload_imag_tdata => imag_reload_tdata,
             s_axis_reload_imag_tlast => imag_reload_tlast,
 
-            m_axis_tvalid => m_axis_tvalid,
-            m_axis_tready => m_axis_tready,
-            m_axis_tdata => m_axis_tdata,
-            m_axis_tlast => m_axis_tlast,
+            m_axis_filtrd_samp_tvalid => m_axis_tvalid,
+            m_axis_filtrd_samp_tready => m_axis_tready,
+            m_axis_filtrd_samp_tdata => m_axis_tdata,
+            m_axis_filtrd_samp_tlast => m_axis_tlast,
 
             event_reload_tlast_missing => event_reload_tlast_missing,
             event_reload_tlast_unexpected => event_reload_tlast_unexpected
@@ -363,19 +374,21 @@ begin
                 dbg_reload_slot <= reload_slot;
                 dbg_reload_real_word <= std_logic_vector(to_signed(current_real_word, 16));
                 dbg_reload_imag_word <= std_logic_vector(to_signed(current_imag_word, 16));
-
-                wait until rising_edge(aclk);
-                dbg_reload_accept <= '0';
                 real_reload_tvalid <= '0';
                 imag_reload_tvalid <= '0';
                 real_reload_tlast <= '0';
                 imag_reload_tlast <= '0';
+
+                wait until rising_edge(aclk);
+                dbg_reload_accept <= '0';
                 real_reload_tdata <= (others => '0');
                 imag_reload_tdata <= (others => '0');
             end loop;
         end procedure;
 
-        procedure send_synchronized_config is
+        procedure send_synchronized_config (
+            constant set_index : integer
+        ) is
             variable timeout_counter : integer := 0;
         begin
             real_config_tdata <= (others => '0');
@@ -400,17 +413,17 @@ begin
             end loop;
 
             dbg_config_accept <= '1';
-            dbg_config_set_index <= 0;
+            dbg_config_set_index <= set_index;
             dbg_real_config_accept <= '1';
             dbg_imag_config_accept <= '1';
             boundary_config_committed <= '1';
+            real_config_tvalid <= '0';
+            imag_config_tvalid <= '0';
 
             wait until rising_edge(aclk);
             dbg_config_accept <= '0';
             dbg_real_config_accept <= '0';
             dbg_imag_config_accept <= '0';
-            real_config_tvalid <= '0';
-            imag_config_tvalid <= '0';
             real_config_tdata <= (others => '0');
             imag_config_tdata <= (others => '0');
         end procedure;
@@ -1023,24 +1036,31 @@ begin
         aresetn <= '1';
         wait_clock_cycles(2);
 
-        -- Original Phase-1 regression kept here for later re-enable.
-        -- verification_packet_active <= '0';
-        -- current_packet_length <= C_ACTIVE_PACKET_LENGTH;
-        -- send_active_packet_with_reload;
-        -- wait_for_output_packet;
-        -- wait_clock_cycles(5);
-        --
-        -- verification_packet_active <= '0';
-        -- current_packet_length <= C_TAP_COUNT;
-        -- send_zero_flush_packet;
-        -- wait_for_output_packet;
-        -- wait_clock_cycles(5);
-        --
-        -- verification_packet_active <= '1';
-        -- current_packet_length <= C_VERIFY_PACKET_LENGTH;
-        -- send_verification_impulse;
-        -- wait_for_output_packet;
-        -- wait_clock_cycles(10);
+        report "Starting direct Q1.14 fractional coefficient impulse verification"
+            severity note;
+
+        send_reload_set(C_RELOAD_SET_COUNT - 1);
+        send_synchronized_config(C_RELOAD_SET_COUNT - 1);
+        wait_clock_cycles(5);
+
+        verification_packet_active <= '0';
+        current_packet_length <= C_TAP_COUNT;
+        send_zero_flush_packet;
+        wait_for_output_packet;
+        wait_clock_cycles(5);
+
+        verification_packet_active <= '1';
+        current_packet_length <= C_VERIFY_PACKET_LENGTH;
+        send_verification_impulse;
+        wait_for_output_packet;
+        wait_clock_cycles(10);
+
+        verification_packet_active <= '0';
+        boundary_config_committed <= '0';
+        wait_clock_cycles(5);
+
+        report "Direct Q1.14 fractional coefficient impulse verification completed"
+            severity note;
 
         -- Active scenario for the supervisor question:
         -- observe the output around CONFIG without zero-flushing the FIR.
