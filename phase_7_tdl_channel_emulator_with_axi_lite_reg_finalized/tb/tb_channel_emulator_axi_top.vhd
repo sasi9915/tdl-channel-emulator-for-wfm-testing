@@ -259,11 +259,13 @@ architecture rtl of tb_channel_emulator_axi_top is
     signal s_axis_tvalid : std_logic                     := '0';
     signal s_axis_tready : std_logic;
     signal s_axis_tdata  : std_logic_vector(31 downto 0) := (others => '0');
+    signal s_axis_tkeep  : std_logic_vector(3 downto 0)  := (others => '0');
     signal s_axis_tlast  : std_logic                     := '0';
 
     signal m_axis_tvalid : std_logic;
     signal m_axis_tready : std_logic := '1';
-    signal m_axis_tdata  : std_logic_vector(79 downto 0);
+    signal m_axis_tdata  : std_logic_vector(127 downto 0);
+    signal m_axis_tkeep  : std_logic_vector(15 downto 0);
     signal m_axis_tlast  : std_logic;
     signal irq           : std_logic;
     signal block_done_irq_monitor_enable : std_logic := '0';
@@ -293,6 +295,7 @@ architecture rtl of tb_channel_emulator_axi_top is
     signal coeff_set_tvalid                : std_logic                     := '0';
     signal coeff_set_tready                : std_logic;
     signal coeff_set_tdata                 : std_logic_vector(31 downto 0) := (others => '0');
+    signal coeff_set_tkeep                 : std_logic_vector(3 downto 0)  := (others => '0');
     signal coeff_set_tlast                 : std_logic                     := '0';
     signal coeff_malformed_enable          : std_logic                     := '0';
     signal coeff_malformed_done            : std_logic                     := '0';
@@ -352,17 +355,20 @@ begin
             s00_axi_rresp                   => s00_axi_rresp,
             s00_axi_rvalid                  => s00_axi_rvalid,
             s00_axi_rready                  => s00_axi_rready,
-            coeff_set_tvalid                => coeff_set_tvalid,
-            coeff_set_tready                => coeff_set_tready,
-            coeff_set_tdata                 => coeff_set_tdata,
-            coeff_set_tlast                 => coeff_set_tlast,
+            s_axis_coeff_tvalid             => coeff_set_tvalid,
+            s_axis_coeff_tready             => coeff_set_tready,
+            s_axis_coeff_tdata              => coeff_set_tdata,
+            s_axis_coeff_tkeep              => coeff_set_tkeep,
+            s_axis_coeff_tlast              => coeff_set_tlast,
             s_axis_tvalid                   => s_axis_tvalid,
             s_axis_tready                   => s_axis_tready,
             s_axis_tdata                    => s_axis_tdata,
+            s_axis_tkeep                    => s_axis_tkeep,
             s_axis_tlast                    => s_axis_tlast,
             m_axis_tvalid                   => m_axis_tvalid,
             m_axis_tready                   => m_axis_tready,
             m_axis_tdata                    => m_axis_tdata,
+            m_axis_tkeep                    => m_axis_tkeep,
             m_axis_tlast                    => m_axis_tlast,
             irq                             => irq
         );
@@ -440,6 +446,7 @@ begin
                     end if;
 
                     coeff_set_tvalid <= '1';
+                    coeff_set_tkeep  <= (others => '1');
 
                     loop
                         wait until rising_edge(aclk);
@@ -450,11 +457,13 @@ begin
 
             coeff_set_tvalid <= '0';
             coeff_set_tdata  <= (others => '0');
+            coeff_set_tkeep  <= (others => '0');
             coeff_set_tlast  <= '0';
         end procedure;
     begin
         coeff_set_tvalid    <= '0';
         coeff_set_tdata     <= (others => '0');
+        coeff_set_tkeep     <= (others => '0');
         coeff_set_tlast     <= '0';
         coeff_malformed_done <= '0';
         coeff_missing_tlast_done <= '0';
@@ -616,6 +625,40 @@ begin
             wait until rising_edge(aclk);
         end procedure;
 
+        procedure axi_read_with_rready_delay(
+            constant addr         : in std_logic_vector(C_AXI_ADDR_WIDTH - 1 downto 0);
+            constant delay_cycles : in integer
+        ) is
+            variable latched_data : std_logic_vector(C_AXI_DATA_WIDTH - 1 downto 0);
+        begin
+            s00_axi_araddr  <= addr;
+            s00_axi_arvalid <= '1';
+            s00_axi_rready  <= '0';
+
+            wait until rising_edge(aclk) and s00_axi_arready = '1';
+            s00_axi_arvalid <= '0';
+
+            wait until rising_edge(aclk) and s00_axi_rvalid = '1';
+            latched_data := s00_axi_rdata;
+
+            for index in 1 to delay_cycles loop
+                wait until rising_edge(aclk);
+
+                assert s00_axi_rvalid = '1'
+                report "AXI-Lite RVALID dropped while RREADY was low"
+                severity failure;
+
+                assert s00_axi_rdata = latched_data
+                report "AXI-Lite RDATA changed while RVALID was high and RREADY was low"
+                severity failure;
+            end loop;
+
+            s00_axi_rready <= '1';
+            wait until rising_edge(aclk);
+            s00_axi_rready <= '0';
+            wait until rising_edge(aclk);
+        end procedure;
+
         procedure send_complex_sample(
             constant i_value    : integer;
             constant q_value    : integer;
@@ -624,6 +667,7 @@ begin
             variable timeout_counter : integer := 0;
         begin
             s_axis_tdata  <= std_logic_vector(to_signed(q_value, 16)) & std_logic_vector(to_signed(i_value, 16));
+            s_axis_tkeep  <= (others => '1');
             s_axis_tlast  <= last_value;
             s_axis_tvalid <= '1';
 
@@ -641,6 +685,7 @@ begin
 
             s_axis_tvalid <= '0';
             s_axis_tlast  <= '0';
+            s_axis_tkeep  <= (others => '0');
             s_axis_tdata  <= (others => '0');
         end procedure;
 
@@ -746,6 +791,7 @@ begin
 
                 if not data_active and not data_done then
                     s_axis_tdata <= std_logic_vector(to_signed(0, 16)) & std_logic_vector(to_signed(1, 16));
+                    s_axis_tkeep <= (others => '1');
 
                     last_sample := sample_index = C_ACTIVE_PACKET_LENGTH - 1;
 
@@ -765,6 +811,7 @@ begin
                     dbg_input_accept <= '1';
                     s_axis_tvalid    <= '0';
                     s_axis_tlast     <= '0';
+                    s_axis_tkeep     <= (others => '0');
                     s_axis_tdata     <= (others => '0');
                     data_active      := false;
 
@@ -787,6 +834,7 @@ begin
 
             s_axis_tvalid <= '0';
             s_axis_tlast  <= '0';
+            s_axis_tkeep  <= (others => '0');
             s_axis_tdata  <= (others => '0');
 
             report "Phase-7 active-traffic packet completed"
@@ -844,6 +892,7 @@ begin
             aresetn                       <= '0';
             s_axis_tvalid                 <= '0';
             s_axis_tlast                  <= '0';
+            s_axis_tkeep                  <= (others => '0');
             s_axis_tdata                  <= (others => '0');
             s00_axi_awaddr                <= (others => '0');
             s00_axi_awvalid               <= '0';
@@ -1094,6 +1143,9 @@ begin
         report "AXI-Lite write/readback failed for IRQ_ENABLE"
         severity failure;
 
+        axi_read_with_rready_delay(C_STATUS_ADDR, 8);
+        axi_read_with_rready_delay(C_DEBUG_ADDR, 8);
+
         -- Configure setup-time parameters while the coefficient-update engine is paused.
         axi_write(C_CONTROL_ADDR, x"00000000");
         axi_write(C_IRQ_ENABLE_ADDR, x"00000000");
@@ -1327,6 +1379,14 @@ begin
                 end if;
 
                 if verification_packet_active = '1' then
+                    assert m_axis_tkeep = (m_axis_tkeep'range => '1')
+                    report "Output AXIS TKEEP did not mark all 128-bit result bytes valid"
+                    severity error;
+
+                    assert m_axis_tdata(127 downto 80) = x"000000000000"
+                    report "Output AXIS upper padding bits were not zero"
+                    severity error;
+
                     assert output_i = expected_i and output_q = expected_q
                     report "Verification impulse mismatch at output sample " & integer'image(output_index)
                     severity error;

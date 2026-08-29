@@ -21,14 +21,17 @@ entity channel_emulator_prefetch_top is
         coeff_set_tvalid                : in  std_logic;
         coeff_set_tready                : out std_logic;
         coeff_set_tdata                 : in  std_logic_vector((2 * G_COEFF_WIDTH) - 1 downto 0);
+        coeff_set_tkeep                 : in  std_logic_vector(((2 * G_COEFF_WIDTH) / 8) - 1 downto 0);
         coeff_set_tlast                 : in  std_logic;
         s_axis_tvalid                   : in  std_logic;
         s_axis_tready                   : out std_logic;
         s_axis_tdata                    : in  std_logic_vector(31 downto 0);
+        s_axis_tkeep                    : in  std_logic_vector(3 downto 0);
         s_axis_tlast                    : in  std_logic;
         m_axis_tvalid                   : out std_logic;
         m_axis_tready                   : in  std_logic;
-        m_axis_tdata                    : out std_logic_vector(79 downto 0);
+        m_axis_tdata                    : out std_logic_vector(127 downto 0);
+        m_axis_tkeep                    : out std_logic_vector(15 downto 0);
         m_axis_tlast                    : out std_logic;
         reload_active                   : out std_logic;
         reload_set_done                 : out std_logic;
@@ -63,6 +66,7 @@ architecture rtl of channel_emulator_prefetch_top is
             wr_valid             : in  std_logic;
             wr_ready             : out std_logic;
             wr_data              : in  std_logic_vector((2 * G_COEFF_WIDTH) - 1 downto 0);
+            wr_keep              : in  std_logic_vector(((2 * G_COEFF_WIDTH) / 8) - 1 downto 0);
             wr_last              : in  std_logic;
             rd_en                : in  std_logic;
             rd_tap_index         : in  integer range 0 to G_TAP_COUNT - 1;
@@ -185,6 +189,8 @@ architecture rtl of channel_emulator_prefetch_top is
     signal bank_active_bank          : std_logic;
     signal bank0_ready               : std_logic;
     signal bank1_ready               : std_logic;
+    signal sample_axis_tready        : std_logic;
+    signal channel_m_axis_tdata      : std_logic_vector(79 downto 0);
 
     signal reader_state           : t_bank_reader_state                                := s_bank_idle;
     signal reader_word_index      : integer range 0 to G_RELOAD_WORD_COUNT - 1         := 0;
@@ -225,6 +231,7 @@ begin
             wr_valid             => coeff_set_tvalid,
             wr_ready             => coeff_set_tready,
             wr_data              => coeff_set_tdata,
+            wr_keep              => coeff_set_tkeep,
             wr_last              => coeff_set_tlast,
             rd_en                => bank_rd_en,
             rd_tap_index         => bank_rd_tap_index,
@@ -357,7 +364,7 @@ begin
             aclk                      => aclk,
             aresetn                   => aresetn,
             s_axis_tvalid             => s_axis_tvalid,
-            s_axis_tready             => s_axis_tready,
+            s_axis_tready             => sample_axis_tready,
             s_axis_tdata              => s_axis_tdata,
             s_axis_tlast              => s_axis_tlast,
             s_axis_config_real_tvalid => real_config_tvalid,
@@ -376,10 +383,28 @@ begin
             s_axis_reload_imag_tlast  => imag_reload_tlast,
             m_axis_tvalid             => m_axis_tvalid,
             m_axis_tready             => m_axis_tready,
-            m_axis_tdata              => m_axis_tdata,
+            m_axis_tdata              => channel_m_axis_tdata,
             m_axis_tlast              => m_axis_tlast,
             fir_reload_error          => channel_fir_reload_error
         );
+
+    s_axis_tready <= sample_axis_tready;
+    m_axis_tdata(79 downto 0) <= channel_m_axis_tdata;
+    m_axis_tdata(127 downto 80) <= (others => '0');
+    m_axis_tkeep <= (others => '1');
+
+    -- synthesis translate_off
+    process(aclk)
+    begin
+        if rising_edge(aclk) then
+            if aresetn = '1' and s_axis_tvalid = '1' and sample_axis_tready = '1' then
+                assert s_axis_tkeep = (s_axis_tkeep'range => '1')
+                report "Sample AXIS TKEEP must mark all 32-bit IQ bytes valid"
+                severity error;
+            end if;
+        end if;
+    end process;
+    -- synthesis translate_on
 
     coeff_bank_active_set_available <= bank_active_set_available;
     coeff_bank_underrun             <= bank_underrun;
