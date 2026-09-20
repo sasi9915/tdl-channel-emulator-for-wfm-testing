@@ -35,17 +35,20 @@ entity channel_emulator_axi_top is
         s00_axi_rresp    : out std_logic_vector(1 downto 0);
         s00_axi_rvalid   : out std_logic;
         s00_axi_rready   : in  std_logic;
-        coeff_set_tvalid : in  std_logic;
-        coeff_set_tready : out std_logic;
-        coeff_set_tdata  : in  std_logic_vector((2 * G_COEFF_WIDTH) - 1 downto 0);
-        coeff_set_tlast  : in  std_logic;
+        s_axis_coeff_tvalid : in  std_logic;
+        s_axis_coeff_tready : out std_logic;
+        s_axis_coeff_tdata  : in  std_logic_vector((2 * G_COEFF_WIDTH) - 1 downto 0);
+        s_axis_coeff_tkeep  : in  std_logic_vector(((2 * G_COEFF_WIDTH) / 8) - 1 downto 0);
+        s_axis_coeff_tlast  : in  std_logic;
         s_axis_tvalid    : in  std_logic;
         s_axis_tready    : out std_logic;
         s_axis_tdata     : in  std_logic_vector(31 downto 0);
+        s_axis_tkeep     : in  std_logic_vector(3 downto 0);
         s_axis_tlast     : in  std_logic;
         m_axis_tvalid    : out std_logic;
         m_axis_tready    : in  std_logic;
-        m_axis_tdata     : out std_logic_vector(79 downto 0);
+        m_axis_tdata     : out std_logic_vector(127 downto 0);
+        m_axis_tkeep     : out std_logic_vector(15 downto 0);
         m_axis_tlast     : out std_logic;
         irq              : out std_logic
     );
@@ -135,17 +138,20 @@ begin
             clear_status                    => seq_clear_status,
             fu_period_cycles                => unsigned(seq_fu_period_cycles),
             cfg_bank_sets_per_bank          => unsigned(cfg_bank_sets_per_bank),
-            coeff_set_tvalid                => coeff_set_tvalid,
-            coeff_set_tready                => coeff_set_tready,
-            coeff_set_tdata                 => coeff_set_tdata,
-            coeff_set_tlast                 => coeff_set_tlast,
+            coeff_set_tvalid                => s_axis_coeff_tvalid,
+            coeff_set_tready                => s_axis_coeff_tready,
+            coeff_set_tdata                 => s_axis_coeff_tdata,
+            coeff_set_tkeep                 => s_axis_coeff_tkeep,
+            coeff_set_tlast                 => s_axis_coeff_tlast,
             s_axis_tvalid                   => s_axis_tvalid,
             s_axis_tready                   => s_axis_tready,
             s_axis_tdata                    => s_axis_tdata,
+            s_axis_tkeep                    => s_axis_tkeep,
             s_axis_tlast                    => s_axis_tlast,
             m_axis_tvalid                   => m_axis_tvalid,
             m_axis_tready                   => m_axis_tready,
             m_axis_tdata                    => m_axis_tdata,
+            m_axis_tkeep                    => m_axis_tkeep,
             m_axis_tlast                    => m_axis_tlast,
             reload_active                   => w_reload_active,
             reload_set_done                 => w_reload_set_done,

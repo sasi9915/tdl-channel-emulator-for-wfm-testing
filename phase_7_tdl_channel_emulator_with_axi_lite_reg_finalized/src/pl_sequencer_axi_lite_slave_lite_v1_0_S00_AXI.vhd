@@ -109,6 +109,7 @@ architecture arch_imp of pl_sequencer_axi_lite_slave_lite_v1_0_S00_AXI is
 	signal axi_bvalid  : std_logic;
 	signal axi_araddr  : std_logic_vector(C_S_AXI_ADDR_WIDTH - 1 downto 0);
 	signal axi_arready : std_logic;
+	signal axi_rdata   : std_logic_vector(C_S_AXI_DATA_WIDTH - 1 downto 0);
 	signal axi_rresp   : std_logic_vector(1 downto 0);
 	signal axi_rvalid  : std_logic;
 
@@ -154,6 +155,7 @@ begin
 	S_AXI_BRESP                                   <= axi_bresp;
 	S_AXI_BVALID                                  <= axi_bvalid;
 	S_AXI_ARREADY                                 <= axi_arready;
+	S_AXI_RDATA                                   <= axi_rdata;
 	S_AXI_RRESP                                   <= axi_rresp;
 	S_AXI_RVALID                                  <= axi_rvalid;
 		seq_enable                                    <= slv_reg0(0);
@@ -298,6 +300,7 @@ begin
 			if S_AXI_ARESETN = '0' then
 				--asserting initial values to all 0's during reset                                          
 				axi_arready <= '0';
+				axi_rdata   <= (others => '0');
 				axi_rvalid  <= '0';
 				axi_rresp   <= (others => '0');
 				state_read  <= Idle;
@@ -316,6 +319,25 @@ begin
 							axi_rvalid  <= '1';
 							axi_arready <= '0';
 							axi_araddr  <= S_AXI_ARADDR;
+
+							case S_AXI_ARADDR(ADDR_LSB + OPT_MEM_ADDR_BITS downto ADDR_LSB) is
+								when b"000" =>
+									axi_rdata <= w_control_reg;
+								when b"001" =>
+									axi_rdata <= slv_reg1;
+								when b"010" =>
+									axi_rdata <= slv_reg2;
+								when b"011" =>
+									axi_rdata <= slv_reg3;
+								when b"100" =>
+									axi_rdata <= w_status_reg;
+								when b"101" =>
+									axi_rdata <= w_debug_reg;
+								when b"110" =>
+									axi_rdata <= w_capability_reg;
+								when others =>
+									axi_rdata <= (others => '0');
+							end case;
 						else
 							state_read <= state_read;
 						end if;
@@ -334,15 +356,6 @@ begin
 			end if;
 		end if;
 	end process;
-	-- Implement memory mapped register select and read logic generation
-	S_AXI_RDATA <= w_control_reg when (axi_araddr(ADDR_LSB + OPT_MEM_ADDR_BITS downto ADDR_LSB) = "000") else
-	               slv_reg1 when (axi_araddr(ADDR_LSB + OPT_MEM_ADDR_BITS downto ADDR_LSB) = "001") else
-	               slv_reg2 when (axi_araddr(ADDR_LSB + OPT_MEM_ADDR_BITS downto ADDR_LSB) = "010") else
-	               slv_reg3 when (axi_araddr(ADDR_LSB + OPT_MEM_ADDR_BITS downto ADDR_LSB) = "011") else
-	               w_status_reg when (axi_araddr(ADDR_LSB + OPT_MEM_ADDR_BITS downto ADDR_LSB) = "100") else
-	               w_debug_reg when (axi_araddr(ADDR_LSB + OPT_MEM_ADDR_BITS downto ADDR_LSB) = "101") else
-	               w_capability_reg when (axi_araddr(ADDR_LSB + OPT_MEM_ADDR_BITS downto ADDR_LSB) = "110") else
-	               (others => '0');
 
 	-- Add user logic here
 

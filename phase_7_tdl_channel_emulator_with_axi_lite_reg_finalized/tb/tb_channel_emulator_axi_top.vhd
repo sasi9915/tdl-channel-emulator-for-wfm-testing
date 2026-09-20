@@ -16,6 +16,7 @@ architecture rtl of tb_channel_emulator_axi_top is
     constant C_BANK_SET_COUNT             : integer                                         := 2;
     constant C_CONTINUOUS_RELOAD_SET_COUNT : integer                                        := 4;
     constant C_PREFETCH_SET_COUNT         : integer                                         := C_CONTINUOUS_RELOAD_SET_COUNT + C_BANK_SET_COUNT;
+    constant C_VERIFY_RELOAD_SET_INDEX    : integer                                         := C_CONTINUOUS_RELOAD_SET_COUNT - 1;
     constant C_AXIS_CLK_HZ                : integer                                         := 300_000_000;
     constant C_FU_HZ                      : integer                                         := 6_000;
     constant C_CLK_PERIOD                 : time                                            := 3333 ps;
@@ -37,6 +38,14 @@ architecture rtl of tb_channel_emulator_axi_top is
     constant C_IRQ_ENABLE_ADDR            : std_logic_vector(C_AXI_ADDR_WIDTH - 1 downto 0) := "01100";
     constant C_STATUS_ADDR                : std_logic_vector(C_AXI_ADDR_WIDTH - 1 downto 0) := "10000";
     constant C_DEBUG_ADDR                 : std_logic_vector(C_AXI_ADDR_WIDTH - 1 downto 0) := "10100";
+
+    constant C_COEFF_FRAC_BITS            : integer                                         := 14;
+    constant C_Q14_ONE                    : integer                                         := 2 ** C_COEFF_FRAC_BITS;
+    constant C_Q14_HALF                   : integer                                         := C_Q14_ONE / 2;
+    constant C_Q14_QUARTER                : integer                                         := C_Q14_ONE / 4;
+    constant C_Q14_EIGHTH                 : integer                                         := C_Q14_ONE / 8;
+    constant C_Q14_THREE_QUARTERS         : integer                                         := 3 * C_Q14_QUARTER;
+    constant C_Q14_THREE_EIGHTHS          : integer                                         := 3 * C_Q14_EIGHTH;
 
     type t_coefficient_array  is array (0 to C_TAP_COUNT - 1) of integer;
     type t_reload_order_array is array (0 to C_RELOAD_WORD_COUNT - 1) of integer range 0 to C_RELOAD_WORD_COUNT - 1;
@@ -73,73 +82,73 @@ architecture rtl of tb_channel_emulator_axi_top is
         case set_index is
             when 0 =>
                 case coefficient_index is
-                    when 0      => return 3;
-                    when 1      => return 4;
-                    when 2      => return 5;
+                    when 0      => return C_Q14_HALF;              --  0.5000
+                    when 1      => return -C_Q14_QUARTER;          -- -0.2500
+                    when 2      => return C_Q14_EIGHTH;            --  0.1250
                     when others => return 0;
                 end case;
 
             when 1 =>
                 case coefficient_index is
-                    when 0      => return 1;
-                    when 1      => return 2;
-                    when 2      => return 3;
+                    when 0      => return C_Q14_QUARTER;           --  0.2500
+                    when 1      => return C_Q14_HALF;              --  0.5000
+                    when 2      => return -C_Q14_EIGHTH;           -- -0.1250
                     when others => return 0;
                 end case;
 
             when 2 =>
                 case coefficient_index is
-                    when 0      => return 5;
-                    when 1      => return 1;
-                    when 2      => return -2;
+                    when 0      => return C_Q14_THREE_QUARTERS;    --  0.7500
+                    when 1      => return -C_Q14_HALF;             -- -0.5000
+                    when 2      => return C_Q14_QUARTER;           --  0.2500
                     when others => return 0;
                 end case;
 
             when 3 =>
                 case coefficient_index is
-                    when 0      => return 7;
-                    when 1      => return 8;
-                    when 2      => return 9;
+                    when 0      => return C_Q14_THREE_QUARTERS;    --  0.7500
+                    when 1      => return -C_Q14_HALF;             -- -0.5000
+                    when 2      => return C_Q14_QUARTER;           --  0.2500
                     when others => return 0;
                 end case;
 
             when 4 =>
                 case coefficient_index is
-                    when 0      => return 2;
-                    when 1      => return 4;
-                    when 2      => return 6;
+                    when 0      => return C_Q14_QUARTER;           --  0.2500
+                    when 1      => return C_Q14_EIGHTH;            --  0.1250
+                    when 2      => return -C_Q14_QUARTER;          -- -0.2500
                     when others => return 0;
                 end case;
 
             when 5 =>
                 case coefficient_index is
-                    when 0      => return 9;
-                    when 1      => return -4;
-                    when 2      => return 2;
+                    when 0      => return C_Q14_HALF;              --  0.5000
+                    when 1      => return -C_Q14_EIGHTH;           -- -0.1250
+                    when 2      => return C_Q14_THREE_EIGHTHS;     --  0.3750
                     when others => return 0;
                 end case;
 
             when 6 =>
                 case coefficient_index is
-                    when 0      => return 4;
-                    when 1      => return -1;
-                    when 2      => return 7;
+                    when 0      => return -C_Q14_QUARTER;          -- -0.2500
+                    when 1      => return C_Q14_HALF;              --  0.5000
+                    when 2      => return C_Q14_EIGHTH;            --  0.1250
                     when others => return 0;
                 end case;
 
             when 7 =>
                 case coefficient_index is
-                    when 0      => return -3;
-                    when 1      => return 5;
-                    when 2      => return 1;
+                    when 0      => return C_Q14_EIGHTH;            --  0.1250
+                    when 1      => return C_Q14_THREE_EIGHTHS;     --  0.3750
+                    when 2      => return -C_Q14_HALF;             -- -0.5000
                     when others => return 0;
                 end case;
 
             when 8 =>
                 case coefficient_index is
-                    when 0      => return 6;
-                    when 1      => return -2;
-                    when 2      => return 5;
+                    when 0      => return C_Q14_THREE_EIGHTHS;     --  0.3750
+                    when 1      => return -C_Q14_QUARTER;          -- -0.2500
+                    when 2      => return C_Q14_HALF;              --  0.5000
                     when others => return 0;
                 end case;
 
@@ -156,69 +165,73 @@ architecture rtl of tb_channel_emulator_axi_top is
         case set_index is
             when 0 =>
                 case coefficient_index is
-                    when 1      => return -2;
-                    when 2      => return -3;
+                    when 0      => return C_Q14_QUARTER;           --  0.2500
+                    when 1      => return 0;                       --  0.0000
+                    when 2      => return -C_Q14_HALF;             -- -0.5000
                     when others => return 0;
                 end case;
 
             when 1 =>
                 case coefficient_index is
-                    when 0      => return 1;
-                    when 2      => return -1;
+                    when 0      => return -C_Q14_QUARTER;          -- -0.2500
+                    when 1      => return C_Q14_EIGHTH;            --  0.1250
+                    when 2      => return C_Q14_QUARTER;           --  0.2500
                     when others => return 0;
                 end case;
 
             when 2 =>
                 case coefficient_index is
-                    when 1      => return 2;
-                    when 2      => return -2;
+                    when 0      => return -C_Q14_EIGHTH;           -- -0.1250
+                    when 1      => return C_Q14_THREE_EIGHTHS;     --  0.3750
+                    when 2      => return C_Q14_HALF;              --  0.5000
                     when others => return 0;
                 end case;
 
             when 3 =>
                 case coefficient_index is
-                    when 0      => return -1;
-                    when 1      => return -2;
-                    when 2      => return -3;
+                    when 0      => return -C_Q14_EIGHTH;           -- -0.1250
+                    when 1      => return C_Q14_THREE_EIGHTHS;     --  0.3750
+                    when 2      => return C_Q14_HALF;              --  0.5000
                     when others => return 0;
                 end case;
 
             when 4 =>
                 case coefficient_index is
-                    when 0      => return 3;
-                    when 1      => return 1;
-                    when 2      => return -3;
+                    when 0      => return -C_Q14_EIGHTH;           -- -0.1250
+                    when 1      => return C_Q14_QUARTER;           --  0.2500
+                    when 2      => return C_Q14_EIGHTH;            --  0.1250
                     when others => return 0;
                 end case;
 
             when 5 =>
                 case coefficient_index is
-                    when 0      => return 1;
-                    when 1      => return -1;
-                    when 2      => return 3;
+                    when 0      => return C_Q14_THREE_EIGHTHS;     --  0.3750
+                    when 1      => return -C_Q14_QUARTER;          -- -0.2500
+                    when 2      => return C_Q14_EIGHTH;            --  0.1250
                     when others => return 0;
                 end case;
 
             when 6 =>
                 case coefficient_index is
-                    when 0      => return -2;
-                    when 1      => return 2;
+                    when 0      => return C_Q14_EIGHTH;            --  0.1250
+                    when 1      => return -C_Q14_THREE_EIGHTHS;    -- -0.3750
+                    when 2      => return C_Q14_QUARTER;           --  0.2500
                     when others => return 0;
                 end case;
 
             when 7 =>
                 case coefficient_index is
-                    when 0      => return 2;
-                    when 1      => return -4;
-                    when 2      => return 4;
+                    when 0      => return -C_Q14_HALF;             -- -0.5000
+                    when 1      => return C_Q14_QUARTER;           --  0.2500
+                    when 2      => return -C_Q14_EIGHTH;           -- -0.1250
                     when others => return 0;
                 end case;
 
             when 8 =>
                 case coefficient_index is
-                    when 0      => return -1;
-                    when 1      => return 3;
-                    when 2      => return -5;
+                    when 0      => return C_Q14_QUARTER;           --  0.2500
+                    when 1      => return C_Q14_EIGHTH;            --  0.1250
+                    when 2      => return -C_Q14_THREE_EIGHTHS;    -- -0.3750
                     when others => return 0;
                 end case;
 
@@ -246,11 +259,13 @@ architecture rtl of tb_channel_emulator_axi_top is
     signal s_axis_tvalid : std_logic                     := '0';
     signal s_axis_tready : std_logic;
     signal s_axis_tdata  : std_logic_vector(31 downto 0) := (others => '0');
+    signal s_axis_tkeep  : std_logic_vector(3 downto 0)  := (others => '0');
     signal s_axis_tlast  : std_logic                     := '0';
 
     signal m_axis_tvalid : std_logic;
     signal m_axis_tready : std_logic := '1';
-    signal m_axis_tdata  : std_logic_vector(79 downto 0);
+    signal m_axis_tdata  : std_logic_vector(127 downto 0);
+    signal m_axis_tkeep  : std_logic_vector(15 downto 0);
     signal m_axis_tlast  : std_logic;
     signal irq           : std_logic;
     signal block_done_irq_monitor_enable : std_logic := '0';
@@ -280,6 +295,7 @@ architecture rtl of tb_channel_emulator_axi_top is
     signal coeff_set_tvalid                : std_logic                     := '0';
     signal coeff_set_tready                : std_logic;
     signal coeff_set_tdata                 : std_logic_vector(31 downto 0) := (others => '0');
+    signal coeff_set_tkeep                 : std_logic_vector(3 downto 0)  := (others => '0');
     signal coeff_set_tlast                 : std_logic                     := '0';
     signal coeff_malformed_enable          : std_logic                     := '0';
     signal coeff_malformed_done            : std_logic                     := '0';
@@ -339,17 +355,20 @@ begin
             s00_axi_rresp                   => s00_axi_rresp,
             s00_axi_rvalid                  => s00_axi_rvalid,
             s00_axi_rready                  => s00_axi_rready,
-            coeff_set_tvalid                => coeff_set_tvalid,
-            coeff_set_tready                => coeff_set_tready,
-            coeff_set_tdata                 => coeff_set_tdata,
-            coeff_set_tlast                 => coeff_set_tlast,
+            s_axis_coeff_tvalid             => coeff_set_tvalid,
+            s_axis_coeff_tready             => coeff_set_tready,
+            s_axis_coeff_tdata              => coeff_set_tdata,
+            s_axis_coeff_tkeep              => coeff_set_tkeep,
+            s_axis_coeff_tlast              => coeff_set_tlast,
             s_axis_tvalid                   => s_axis_tvalid,
             s_axis_tready                   => s_axis_tready,
             s_axis_tdata                    => s_axis_tdata,
+            s_axis_tkeep                    => s_axis_tkeep,
             s_axis_tlast                    => s_axis_tlast,
             m_axis_tvalid                   => m_axis_tvalid,
             m_axis_tready                   => m_axis_tready,
             m_axis_tdata                    => m_axis_tdata,
+            m_axis_tkeep                    => m_axis_tkeep,
             m_axis_tlast                    => m_axis_tlast,
             irq                             => irq
         );
@@ -427,6 +446,7 @@ begin
                     end if;
 
                     coeff_set_tvalid <= '1';
+                    coeff_set_tkeep  <= (others => '1');
 
                     loop
                         wait until rising_edge(aclk);
@@ -437,11 +457,13 @@ begin
 
             coeff_set_tvalid <= '0';
             coeff_set_tdata  <= (others => '0');
+            coeff_set_tkeep  <= (others => '0');
             coeff_set_tlast  <= '0';
         end procedure;
     begin
         coeff_set_tvalid    <= '0';
         coeff_set_tdata     <= (others => '0');
+        coeff_set_tkeep     <= (others => '0');
         coeff_set_tlast     <= '0';
         coeff_malformed_done <= '0';
         coeff_missing_tlast_done <= '0';
@@ -603,6 +625,40 @@ begin
             wait until rising_edge(aclk);
         end procedure;
 
+        procedure axi_read_with_rready_delay(
+            constant addr         : in std_logic_vector(C_AXI_ADDR_WIDTH - 1 downto 0);
+            constant delay_cycles : in integer
+        ) is
+            variable latched_data : std_logic_vector(C_AXI_DATA_WIDTH - 1 downto 0);
+        begin
+            s00_axi_araddr  <= addr;
+            s00_axi_arvalid <= '1';
+            s00_axi_rready  <= '0';
+
+            wait until rising_edge(aclk) and s00_axi_arready = '1';
+            s00_axi_arvalid <= '0';
+
+            wait until rising_edge(aclk) and s00_axi_rvalid = '1';
+            latched_data := s00_axi_rdata;
+
+            for index in 1 to delay_cycles loop
+                wait until rising_edge(aclk);
+
+                assert s00_axi_rvalid = '1'
+                report "AXI-Lite RVALID dropped while RREADY was low"
+                severity failure;
+
+                assert s00_axi_rdata = latched_data
+                report "AXI-Lite RDATA changed while RVALID was high and RREADY was low"
+                severity failure;
+            end loop;
+
+            s00_axi_rready <= '1';
+            wait until rising_edge(aclk);
+            s00_axi_rready <= '0';
+            wait until rising_edge(aclk);
+        end procedure;
+
         procedure send_complex_sample(
             constant i_value    : integer;
             constant q_value    : integer;
@@ -611,6 +667,7 @@ begin
             variable timeout_counter : integer := 0;
         begin
             s_axis_tdata  <= std_logic_vector(to_signed(q_value, 16)) & std_logic_vector(to_signed(i_value, 16));
+            s_axis_tkeep  <= (others => '1');
             s_axis_tlast  <= last_value;
             s_axis_tvalid <= '1';
 
@@ -628,6 +685,7 @@ begin
 
             s_axis_tvalid <= '0';
             s_axis_tlast  <= '0';
+            s_axis_tkeep  <= (others => '0');
             s_axis_tdata  <= (others => '0');
         end procedure;
 
@@ -733,6 +791,7 @@ begin
 
                 if not data_active and not data_done then
                     s_axis_tdata <= std_logic_vector(to_signed(0, 16)) & std_logic_vector(to_signed(1, 16));
+                    s_axis_tkeep <= (others => '1');
 
                     last_sample := sample_index = C_ACTIVE_PACKET_LENGTH - 1;
 
@@ -752,6 +811,7 @@ begin
                     dbg_input_accept <= '1';
                     s_axis_tvalid    <= '0';
                     s_axis_tlast     <= '0';
+                    s_axis_tkeep     <= (others => '0');
                     s_axis_tdata     <= (others => '0');
                     data_active      := false;
 
@@ -774,6 +834,7 @@ begin
 
             s_axis_tvalid <= '0';
             s_axis_tlast  <= '0';
+            s_axis_tkeep  <= (others => '0');
             s_axis_tdata  <= (others => '0');
 
             report "Phase-7 active-traffic packet completed"
@@ -831,6 +892,7 @@ begin
             aresetn                       <= '0';
             s_axis_tvalid                 <= '0';
             s_axis_tlast                  <= '0';
+            s_axis_tkeep                  <= (others => '0');
             s_axis_tdata                  <= (others => '0');
             s00_axi_awaddr                <= (others => '0');
             s00_axi_awvalid               <= '0';
@@ -1081,6 +1143,9 @@ begin
         report "AXI-Lite write/readback failed for IRQ_ENABLE"
         severity failure;
 
+        axi_read_with_rready_delay(C_STATUS_ADDR, 8);
+        axi_read_with_rready_delay(C_DEBUG_ADDR, 8);
+
         -- Configure setup-time parameters while the coefficient-update engine is paused.
         axi_write(C_CONTROL_ADDR, x"00000000");
         axi_write(C_IRQ_ENABLE_ADDR, x"00000000");
@@ -1279,23 +1344,8 @@ begin
                 expected_q := 0;
 
                 if verification_packet_active = '1' then
-                    case output_index is
-                        when 0 =>
-                            expected_i := 7;
-                            expected_q := -1;
-
-                        when 1 =>
-                            expected_i := 8;
-                            expected_q := -2;
-
-                        when 2 =>
-                            expected_i := 9;
-                            expected_q := -3;
-
-                        when others =>
-                            expected_i := 0;
-                            expected_q := 0;
-                    end case;
+                    expected_i := reload_real_coefficient(C_VERIFY_RELOAD_SET_INDEX, output_index);
+                    expected_q := reload_imag_coefficient(C_VERIFY_RELOAD_SET_INDEX, output_index);
                 end if;
 
                 if verification_packet_active = '1' then
@@ -1329,27 +1379,17 @@ begin
                 end if;
 
                 if verification_packet_active = '1' then
-                    case output_index is
-                        when 0 =>
-                            assert output_i = 7 and output_q = -1
-                            report "Verification impulse mismatch at tap 0"
-                            severity error;
+                    assert m_axis_tkeep = (m_axis_tkeep'range => '1')
+                    report "Output AXIS TKEEP did not mark all 128-bit result bytes valid"
+                    severity error;
 
-                        when 1 =>
-                            assert output_i = 8 and output_q = -2
-                            report "Verification impulse mismatch at tap 1"
-                            severity error;
+                    assert m_axis_tdata(127 downto 80) = x"000000000000"
+                    report "Output AXIS upper padding bits were not zero"
+                    severity error;
 
-                        when 2 =>
-                            assert output_i = 9 and output_q = -3
-                            report "Verification impulse mismatch at tap 2"
-                            severity error;
-
-                        when others =>
-                            assert output_i = 0 and output_q = 0
-                            report "Verification impulse has unexpected non-zero output"
-                            severity error;
-                    end case;
+                    assert output_i = expected_i and output_q = expected_q
+                    report "Verification impulse mismatch at output sample " & integer'image(output_index)
+                    severity error;
                 end if;
 
                 if m_axis_tlast = '1' then

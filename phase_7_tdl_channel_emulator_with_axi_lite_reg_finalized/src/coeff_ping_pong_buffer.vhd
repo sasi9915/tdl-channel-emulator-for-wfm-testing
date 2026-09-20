@@ -17,6 +17,7 @@ entity coeff_ping_pong_buffer is
         wr_valid             : in  std_logic;
         wr_ready             : out std_logic;
         wr_data              : in  std_logic_vector((2 * G_COEFF_WIDTH) - 1 downto 0);
+        wr_keep              : in  std_logic_vector(((2 * G_COEFF_WIDTH) / 8) - 1 downto 0);
         wr_last              : in  std_logic;
         rd_en                : in  std_logic;
         rd_tap_index         : in  integer range 0 to G_TAP_COUNT - 1;
@@ -83,6 +84,7 @@ architecture rtl of coeff_ping_pong_buffer is
     signal w_write_ready               : std_logic;
     signal w_next_write_ready          : std_logic;
     signal w_write_accept              : std_logic;
+    signal w_write_keep_full           : std_logic;
     signal w_final_write_position      : std_logic;
     signal w_write_block_complete      : std_logic;
     signal w_bank0_ready_for_swap      : std_logic;
@@ -97,6 +99,8 @@ architecture rtl of coeff_ping_pong_buffer is
     signal w_ram_read_address : integer range 0 to C_TOTAL_DEPTH - 1;
     signal w_ram_read_data    : t_coeff_word;
     signal w_ram_read_valid   : std_logic;
+    signal r_read_data_pipe   : t_coeff_word := (others => '0');
+    signal r_read_valid_pipe  : std_logic := '0';
 
 begin
 
@@ -139,7 +143,12 @@ begin
                     r_write_ready          <= w_next_write_ready;
 
                     if w_write_accept = '1' then
-                        if w_final_write_position = '1' then
+                        if w_write_keep_full = '0' then
+                            r_write_error     <= '1';
+                            r_write_set_count <= 0;
+                            r_write_tap_count <= 0;
+                            r_write_address   <= w_write_bank_base;
+                        elsif w_final_write_position = '1' then
                             if wr_last = '1' then
                                 if w_write_bank = '0' then
                                     r_bank0_ready <= '1';
@@ -223,6 +232,22 @@ begin
         end if;
     end process;
 
+    read_output_pipeline_process : process(aclk)
+    begin
+        if rising_edge(aclk) then
+            if aresetn = '0' or clear_errors = '1' then
+                r_read_data_pipe  <= (others => '0');
+                r_read_valid_pipe <= '0';
+            else
+                r_read_valid_pipe <= w_ram_read_valid;
+
+                if w_ram_read_valid = '1' then
+                    r_read_data_pipe <= w_ram_read_data;
+                end if;
+            end if;
+        end if;
+    end process;
+
     
 
     w_write_bank             <= r_active_bank when r_active_bank_valid = '0' else not r_active_bank;
@@ -233,6 +258,7 @@ begin
                                 w_write_ready;
     wr_ready                 <= r_write_ready and not clear_errors;
     w_write_accept           <= wr_valid and r_write_ready and not clear_errors;
+    w_write_keep_full        <= '1' when wr_keep = (wr_keep'range => '1') else '0';
     w_final_write_position   <= '1' when r_write_set_count = r_sets_per_bank - 1 and r_write_tap_count = G_TAP_COUNT - 1 else '0';
     w_write_block_complete   <= w_write_accept and w_final_write_position and wr_last;
     w_bank0_ready_for_swap   <= r_bank0_ready or (w_write_block_complete and not w_write_bank);
@@ -265,9 +291,9 @@ begin
         end if;
     end process;
 
-    rd_data <= w_ram_read_data when w_ram_read_valid = '1' else (others => '0');
+    rd_data <= r_read_data_pipe when r_read_valid_pipe = '1' else (others => '0');
 
-    rd_valid             <= w_ram_read_valid;
+    rd_valid             <= r_read_valid_pipe;
     active_set_available <= r_active_set_available;
     consume_set_ready    <= r_active_set_available and not clear_errors;
     underrun             <= r_underrun;
